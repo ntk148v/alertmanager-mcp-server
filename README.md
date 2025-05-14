@@ -91,7 +91,7 @@ ALERTMANAGER_PASSWORD=your_password  # optional
 $ docker run -e ALERTMANAGER_URL=http://your-alertmanager:9093 \
     -e ALERTMANAGER_USERNAME=your_username \
     -e ALERTMANAGER_PASSWORD=your_password \
-    -p 8000:8000 kiennt26/alertmanager-mcp-server
+    -p 8000:8000 ghcr.io/ntk148v/alertmanager-mcp-server
 ```
 
 - Running with Docker in Claude Desktop:
@@ -108,7 +108,7 @@ $ docker run -e ALERTMANAGER_URL=http://your-alertmanager:9093 \
         "-e", "ALERTMANAGER_URL",
         "-e", "ALERTMANAGER_USERNAME",
         "-e", "ALERTMANAGER_PASSWORD",
-        "kiennt26/alertmanager-mcp-server:latest"
+        "ghcr.io/ntk148v/alertmanager-mcp-server:latest"
       ],
       "env": {
         "ALERTMANAGER_URL": "http://your-alertmanager:9093s",
