@@ -1,0 +1,34 @@
+FROM python:3.12-slim-bookworm AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1
+COPY pyproject.toml uv.lock ./
+COPY src ./src/
+RUN uv venv && uv pip install --no-cache-dir -e .
+
+FROM python:3.12-slim-bookworm
+WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN groupadd -r app && useradd -r -g app app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+COPY pyproject.toml ./
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH="/app" \
+    PYTHONFAULTHANDLER=1
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+CMD ["/app/.venv/bin/alertmanager-mcp-server"]
+
+LABEL org.opencontainers.image.title="Prometheus Alertmanager MCP Server" \
+    org.opencontainers.image.description="Model Context Protocol server for Alertmanager integration" \
+    org.opencontainers.image.version="0.0.1" \
+    org.opencontainers.image.authors="Kien Nguyen Tuan" \
+    org.opencontainers.image.source="https://github.com/ntk148v/alertmanager-mcp-server" \
+    org.opencontainers.image.licenses="Apache 2" \
+    org.opencontainers.image.url="https://github.com/ntk148v/alertmanager-mcp-server" \
+    org.opencontainers.image.documentation="https://github.com/ntk148v/alertmanager-mcp-server#readme"
