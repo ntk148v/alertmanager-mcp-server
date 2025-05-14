@@ -1,5 +1,4 @@
 <div align="center">
-    <img src="./static/favicon_io/android-chrome-192x192.png">
     <h1>Prometheus Alertmanager MCP</h1>
     <p>
         <a href="https://github.com/ntk148v/alertmanager-mcp-server/blob/master/LICENSE">
