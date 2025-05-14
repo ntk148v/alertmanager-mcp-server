@@ -65,7 +65,7 @@ ALERTMANAGER_PASSWORD=your_password  # optional
 ```json
 {
   "mcpServers": {
-    "prometheus": {
+    "alertmanager": {
       "command": "uv",
       "args": [
         "--directory",
@@ -99,7 +99,7 @@ $ docker run -e ALERTMANAGER_URL=http://your-alertmanager:9093 \
 ```json
 {
   "mcpServers": {
-    "prometheus": {
+    "alertmanager": {
       "command": "docker",
       "args": [
         "run",
