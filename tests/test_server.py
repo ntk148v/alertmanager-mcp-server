@@ -8,39 +8,6 @@ from unittest.mock import patch, MagicMock
 import alertmanager_mcp_server.server as server
 
 
-def test__validate_get_alert_kwargs_valid():
-    # Should not raise for valid keys
-    server._validate_get_alert_kwargs(
-        filter=None, silenced=None, inhibited=None, receiver=None)
-
-
-def test__validate_get_alert_kwargs_invalid():
-    with pytest.raises(KeyError):
-        server._validate_get_alert_kwargs(foo="bar")
-
-
-def test__validate_get_silence_kwargs_valid():
-    # Should not raise for valid key
-    server._validate_get_silence_kwargs(filter=None)
-
-
-def test__validate_get_silence_kwargs_invalid():
-    with pytest.raises(KeyError):
-        server._validate_get_silence_kwargs(foo="bar")
-
-
-def test__handle_filters_valid():
-    filters = {"severity": "critical", "instance": "localhost"}
-    result = server._handle_filters(filters)
-    assert 'severity="critical"' in result
-    assert 'instance="localhost"' in result
-
-
-def test__handle_filters_invalid():
-    with pytest.raises(TypeError):
-        server._handle_filters(["not", "a", "dict"])
-
-
 @patch("alertmanager_mcp_server.server.requests.request")
 def test_make_request_without_basic_auth_success(mock_request):
     mock_response = MagicMock()
@@ -132,7 +99,7 @@ async def test_get_receivers_tool(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_silences_tool(mock_make_request):
-    # /silences returns list of Silence objects
+    # /silences returns list of Silence objects, now supports filter param
     mock_make_request.return_value = [
         {
             "id": "123",
@@ -144,10 +111,15 @@ async def test_get_silences_tool(mock_make_request):
             "endsAt": "2025-05-15T00:00:00Z"
         }
     ]
+    # test with no filter
     result = await server.get_silences()
-    mock_make_request.assert_called_once_with(
-        method="GET", route="/api/v2/silences")
+    mock_make_request.assert_called_with(
+        method="GET", route="/api/v2/silences", params=None)
     assert result[0]["status"]["state"] == "active"
+    # test with filter
+    await server.get_silences(filter="alertname=HighCPU")
+    mock_make_request.assert_called_with(
+        method="GET", route="/api/v2/silences", params={"filter": "alertname=HighCPU"})
 
 
 @pytest.mark.asyncio
@@ -194,7 +166,7 @@ async def test_delete_silence_tool(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_alerts_tool(mock_make_request):
-    # /alerts returns list of Alert objects
+    # /alerts returns list of Alert objects, now supports filter, silenced, inhibited, active
     mock_make_request.return_value = [
         {
             "labels": {"alertname": "HighCPU"},
@@ -204,10 +176,15 @@ async def test_get_alerts_tool(mock_make_request):
             "status": {"state": "active"}
         }
     ]
+    # test with no params
     result = await server.get_alerts()
-    mock_make_request.assert_called_once_with(
-        method="GET", route="/api/v2/alerts", params={})
+    mock_make_request.assert_any_call(
+        method="GET", route="/api/v2/alerts", params={"active": True})
     assert result[0]["labels"]["alertname"] == "HighCPU"
+    # test with filter and flags
+    await server.get_alerts(filter="alertname=HighCPU", silenced=True, inhibited=False, active=True)
+    mock_make_request.assert_any_call(method="GET", route="/api/v2/alerts", params={
+                                      "filter": "alertname=HighCPU", "silenced": True, "inhibited": False, "active": True})
 
 
 @pytest.mark.asyncio
@@ -230,7 +207,7 @@ async def test_post_alerts_tool(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_alert_groups_tool(mock_make_request):
-    # /alerts/groups returns list of AlertGroup objects
+    # /alerts/groups returns list of AlertGroup objects, now supports silenced, inhibited, active
     mock_make_request.return_value = [
         {
             "labels": {"severity": "critical"},
@@ -240,17 +217,21 @@ async def test_get_alert_groups_tool(mock_make_request):
             ]
         }
     ]
+    # test with no params
     result = await server.get_alert_groups()
-    mock_make_request.assert_called_once_with(
-        method="GET", route="/api/v2/alerts/groups", params={})
+    mock_make_request.assert_any_call(
+        method="GET", route="/api/v2/alerts/groups", params={"active": True})
     assert result[0]["labels"]["severity"] == "critical"
+    # test with flags
+    await server.get_alert_groups(silenced=True, inhibited=True, active=False)
+    mock_make_request.assert_any_call(method="GET", route="/api/v2/alerts/groups", params={
+                                      "active": False, "silenced": True, "inhibited": True})
 
 
 def test_setup_environment_with_basic_auth(monkeypatch):
     monkeypatch.setenv("ALERTMANAGER_URL", "http://localhost:9093")
     monkeypatch.setenv("ALERTMANAGER_USERNAME", "user")
     monkeypatch.setenv("ALERTMANAGER_PASSWORD", "pass")
-    import importlib
     importlib.reload(server)
     with patch("builtins.print") as mock_print:
         assert server.setup_environment() is True
@@ -262,7 +243,6 @@ def test_setup_environment_without_basic_auth(monkeypatch):
     monkeypatch.setenv("ALERTMANAGER_URL", "http://localhost:9093")
     monkeypatch.delenv("ALERTMANAGER_USERNAME", raising=False)
     monkeypatch.delenv("ALERTMANAGER_PASSWORD", raising=False)
-    import importlib
     importlib.reload(server)
     with patch("builtins.print") as mock_print:
         assert server.setup_environment() is True

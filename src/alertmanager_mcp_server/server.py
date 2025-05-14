@@ -28,58 +28,6 @@ config = AlertmanagerConfig(
 )
 
 
-def _validate_get_alert_kwargs(**kwargs):
-    """
-    Check kwargs for validity.
-
-    Parameters
-    ----------
-    **kwargs : dict
-        Arbitrary keyword arguments. These kwargs are used to specify
-        filters to limit the return of our list of alerts to alerts that
-        match our filter.
-
-
-    Raises
-    ------
-    KeyError
-        If a key in our kwargs doesn't match our list of valid_keys,
-        we raise a key error. We prevent filter keys that Alert Manager
-        doesn't understand from being passed in a request.
-
-    """
-    valid_keys = ["filter", "silenced", "inhibited", "receiver"]
-    for key in kwargs.keys():
-        if key not in valid_keys:
-            raise KeyError("invalid get parameter {}".format(key))
-
-
-def _validate_get_silence_kwargs(**kwargs):
-    """
-    Check kwargs for validity.
-
-    Parameters
-    ----------
-    **kwargs : dict
-        Arbitrary keyword arguments. These kwargs are used to specify
-        filters to limit the return of our list of silences to silences that
-        match our filter.
-
-
-    Raises
-    ------
-    KeyError
-        If a key in our kwargs doesn't match our list of valid_keys,
-        we raise a key error. We prevent filter keys that Alert Manager
-        doesn't understand from being passed in a request.
-
-    """
-    valid_keys = ["filter"]
-    for key in kwargs.keys():
-        if key not in valid_keys:
-            raise KeyError("invalid get parameter {}".format(key))
-
-
 def make_request(method="GET", route="/", **kwargs):
     """Make HTTP request and return a requests.Response object.
 
@@ -113,37 +61,6 @@ def make_request(method="GET", route="/", **kwargs):
     return response.json()
 
 
-def _handle_filters(filter_dict):
-    """
-    Construct and return a filter.
-
-    This is a protected method and should not be used outside of the public
-    get_alerts method. This method works to ensure the structure of our
-    filter string is something that Alert Manager can understand.
-
-    Parameters
-    ----------
-    filter_dict : dict
-        A dict where the keys represent the label on which we wish to
-        filter and the value that key should have.
-
-
-    Returns
-    -------
-    list
-        Returns a list of filter strings to be passed along with our
-        get_alerts method call.
-    """
-    if not isinstance(filter_dict, dict):
-        raise TypeError("get_alerts() and get_silences() filter must be dict")
-    filter_list = list()
-    starter_string = '{}="{}"'
-    for key, value in filter_dict.items():
-        string = starter_string.format(key, value)
-        filter_list.append(string)
-    return filter_list
-
-
 @mcp.tool(description="Get current status of an Alertmanager instance and its cluster")
 async def get_status():
     """Get current status of an Alertmanager instance and its cluster
@@ -170,16 +87,13 @@ async def get_receivers():
 
 
 @mcp.tool(description="Get list of all silences")
-async def get_silences(**kwargs):
+async def get_silences(filter: Optional[str] = None):
     """Get list of all silences
 
     Parameters
     ----------
-    **kwargs : dict
-        Arbitrary keyword arguments. These kwargs can be used to specify
-        filters to limit the return of our list of alerts to silences that
-        match our filter.
-
+    filter
+        Filtering query (e.g. alertname=~'.*CPU.*')"),
 
     Returns
     -------
@@ -187,10 +101,10 @@ async def get_silences(**kwargs):
         Return a list of Silence objects from Alertmanager instance.
     """
 
-    _validate_get_silence_kwargs(**kwargs)
-    if kwargs.get("filter"):
-        kwargs["filter"] = _handle_filters(kwargs["filter"])
-    return make_request(method="GET", route="/api/v2/silences")
+    params = None
+    if filter:
+        params = {"filter": filter}
+    return make_request(method="GET", route="/api/v2/silences", params=params)
 
 
 @mcp.tool(description="Post a new silence or update an existing one")
@@ -253,25 +167,38 @@ async def delete_silence(silence_id: str):
 
 
 @mcp.tool(description="Get a list of alerts")
-async def get_alerts(**kwargs):
+async def get_alerts(filter: Optional[str] = None,
+                     silenced: Optional[bool] = None,
+                     inhibited: Optional[bool] = None,
+                     active: Optional[bool] = None):
     """Get a list of alerts currently in Alertmanager.
 
     Params
     ------
-    **kwargs : dict
-        Arbitrary keyword arguments. These kwargs can be used to specify
-        filters to limit the return of our list of alerts to alerts that
-        match our filter.
+    filter
+        Filtering query (e.g. alertname=~'.*CPU.*')"),
+    silenced
+        If true, include silenced alerts.
+    inhibited
+        If true, include inhibited alerts.
+    active
+        If true, include active alerts.
 
     Returns
     -------
     list
         Return a list of Alert objects from Alertmanager instance.
     """
-    _validate_get_alert_kwargs(**kwargs)
-    if kwargs.get("filter"):
-        kwargs["filter"] = _handle_filters(kwargs["filter"])
-    return make_request(method="GET", route="/api/v2/alerts", params=kwargs)
+    params = {"active": True}
+    if filter:
+        params = {"filter": filter}
+    if silenced is not None:
+        params["silenced"] = silenced
+    if inhibited is not None:
+        params["inhibited"] = inhibited
+    if active is not None:
+        params["active"] = active
+    return make_request(method="GET", route="/api/v2/alerts", params=params)
 
 
 @mcp.tool(description="Create new alerts")
@@ -299,26 +226,34 @@ async def post_alerts(alerts: List[Dict]):
 
 
 @mcp.tool(description="Get a list of alert groups")
-async def get_alert_groups(**kwargs):
+async def get_alert_groups(silenced: Optional[bool] = None,
+                           inhibited: Optional[bool] = None,
+                           active: Optional[bool] = None):
     """Get a list of alert groups
 
     Params
     ------
-    **kwargs : dict
-        Arbitrary keyword arguments. These kwargs can be used to specify
-        filters to limit the return of our list of alerts to alerts that
-        match our filter.
+    silenced
+        If true, include silenced alerts.
+    inhibited
+        If true, include inhibited alerts.
+    active
+        If true, include active alerts.
 
     Returns
     -------
     list
         Return a list of AlertGroup objects from Alertmanager instance.
     """
-    _validate_get_alert_kwargs(**kwargs)
-    if kwargs.get("filter"):
-        kwargs["filter"] = _handle_filters(kwargs["filter"])
+    params = {"active": True}
+    if silenced is not None:
+        params["silenced"] = silenced
+    if inhibited is not None:
+        params["inhibited"] = inhibited
+    if active is not None:
+        params["active"] = active
     return make_request(method="GET", route="/api/v2/alerts/groups",
-                        params=kwargs)
+                        params=params)
 
 
 def setup_environment():
@@ -337,9 +272,9 @@ def setup_environment():
     print(f"  Server URL: {config.url}")
 
     if config.username and config.password:
-        print("Authentication: Using basic auth")
+        print("  Authentication: Using basic auth")
     else:
-        print("Authentication: None (no credentials provided)")
+        print("  Authentication: None (no credentials provided)")
 
     return True
 
