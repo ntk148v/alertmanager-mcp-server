@@ -1,0 +1,27 @@
+# Smithery configuration file: https://smithery.ai/docs/build/project-config
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - alertmanagerUrl
+    properties:
+      alertmanagerUrl:
+        type: string
+        description: URL of the Prometheus Alertmanager server
+      alertmanagerUsername:
+        type: string
+        description: Basic auth username (optional)
+      alertmanagerPassword:
+        type: string
+        description: Basic auth password (optional)
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
+    (config) => ({ command: 'alertmanager-mcp-server', env: { ALERTMANAGER_URL: config.alertmanagerUrl, ALERTMANAGER_USERNAME: config.alertmanagerUsername || '', ALERTMANAGER_PASSWORD: config.alertmanagerPassword || '' } })
+  exampleConfig:
+    alertmanagerUrl: http://your-alertmanager:9093
+    alertmanagerUsername: your_username
+    alertmanagerPassword: your_password
