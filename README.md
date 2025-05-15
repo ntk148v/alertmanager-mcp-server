@@ -83,6 +83,17 @@ ALERTMANAGER_PASSWORD=your_password  # optional
 }
 ```
 
+- Restart Claude Desktop to load new configuration.
+- You can now ask Claude to interact with Alertmanager using natual language:
+  - "Show me current alerts"
+  - "Filter alerts related to CPU issues"
+  - "Get details for this alert"
+  - "Create a silence for this alert for the next 2 hours"
+
+![](./images/sample1.jpg)
+
+![](./images/sample2.jpg)
+
 ### 3.3. Docker Run
 
 - Run it with pre-built image (or you can build it yourself):
