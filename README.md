@@ -42,6 +42,14 @@ Prometheus Alertmanager MCP is a [Model Context Protocol](https://modelcontextpr
 - Docker (optional, for containerized deployment).
 - Ensure your Prometheus Alertmanager server is accessible from the environment where you'll run this MCP server.
 
+### Installing via Smithery
+
+To install Prometheus Alertmanager MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@ntk148v/alertmanager-mcp-server):
+
+```bash
+npx -y @smithery/cli install @ntk148v/alertmanager-mcp-server --client claude
+```
+
 ### 3.2. Local Run
 
 - Clone the repository:
