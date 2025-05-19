@@ -15,20 +15,20 @@ setup:
 
 # Run the server directly
 run:
-	uv run src/alertmanager-mcp-server/server.py
+	uv run src/alertmanager_mcp_server/server.py
 
 # Run in development mode with MCP inspector
 dev:
-	mcp dev src/alertmanager-mcp-server/server.py
+	mcp dev src/alertmanager_mcp_server/server.py
 
 # Install in Claude desktop
 install:
-	mcp install src/alertmanager-mcp-server/server.py
+	mcp install src/alertmanager_mcp_server/server.py
 
 # Docker build
 docker-build:
-	docker build -t kiennt26/alertmanager-mcp-server:latest .
+	docker build -t kiennt26/alertmanager_mcp_server:latest .
 
 # Run with Docker
 docker-run:
-	docker run -p 8000:8000 kiennt26/alertmanager-mcp-server:latest
+	docker run -p 8000:8000 kiennt26/alertmanager_mcp_server:latest
