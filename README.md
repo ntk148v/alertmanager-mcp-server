@@ -15,9 +15,9 @@
 - [2. Features](#2-features)
 - [3. Quickstart](#3-quickstart)
   - [3.1. Prerequisites](#31-prerequisites)
-  - [Installing via Smithery](#installing-via-smithery)
-  - [3.2. Local Run](#32-local-run)
-  - [3.3. Docker Run](#33-docker-run)
+  - [3.2. Installing via Smithery](#32-installing-via-smithery)
+  - [3.3. Local Run](#33-local-run)
+  - [3.4. Docker Run](#34-docker-run)
 - [4. Tools](#4-tools)
 - [5. Development](#5-development)
 - [6. License](#6-license)
@@ -43,7 +43,7 @@ Prometheus Alertmanager MCP is a [Model Context Protocol](https://modelcontextpr
 - Docker (optional, for containerized deployment).
 - Ensure your Prometheus Alertmanager server is accessible from the environment where you'll run this MCP server.
 
-### Installing via Smithery
+### 3.2. Installing via Smithery
 
 To install Prometheus Alertmanager MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@ntk148v/alertmanager-mcp-server):
 
@@ -51,7 +51,7 @@ To install Prometheus Alertmanager MCP Server for Claude Desktop automatically v
 npx -y @smithery/cli install @ntk148v/alertmanager-mcp-server --client claude
 ```
 
-### 3.2. Local Run
+### 3.3. Local Run
 
 - Clone the repository:
 
@@ -92,6 +92,12 @@ ALERTMANAGER_PASSWORD=your_password  # optional
 }
 ```
 
+- Or install it using make command:
+
+```shell
+$ make install
+```
+
 - Restart Claude Desktop to load new configuration.
 - You can now ask Claude to interact with Alertmanager using natual language:
   - "Show me current alerts"
@@ -103,7 +109,7 @@ ALERTMANAGER_PASSWORD=your_password  # optional
 
 ![](./images/sample2.jpg)
 
-### 3.3. Docker Run
+### 3.4. Docker Run
 
 - Run it with pre-built image (or you can build it yourself):
 
