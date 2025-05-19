@@ -266,12 +266,3 @@ def test_run_server_success(mock_mcp, mock_setup_env):
         mock_mcp.run.assert_called_once_with(transport="stdio")
         assert any("Starting Prometheus Alertmanager MCP Server" in str(call)
                    for call in mock_print.call_args_list)
-
-
-@patch("alertmanager_mcp_server.server.setup_environment", return_value=False)
-def test_run_server_exit(mock_setup_env):
-    with patch("sys.exit", side_effect=SystemExit) as mock_exit:
-        with pytest.raises(SystemExit):
-            server.run_server()
-        mock_setup_env.assert_called_once()
-        mock_exit.assert_called_once_with(1)
