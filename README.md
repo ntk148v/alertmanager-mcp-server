@@ -15,6 +15,7 @@
 - [2. Features](#2-features)
 - [3. Quickstart](#3-quickstart)
   - [3.1. Prerequisites](#31-prerequisites)
+  - [Installing via Smithery](#installing-via-smithery)
   - [3.2. Local Run](#32-local-run)
   - [3.3. Docker Run](#33-docker-run)
 - [4. Tools](#4-tools)
@@ -163,12 +164,16 @@ This project uses [uv](https://github.com/astral-sh/uv) to manage dependencies. 
 ```bash
 # Clone the repository
 $ git clone https://github.com/ntk148v/alertmanager-mcp-server.git
-$ uv venv
-$ source .venv/bin/activate  # On Unix/macOS
-$ .venv\Scripts\activate     # On Windows
-$ uv pip install -e .
-# run test
-$ pytest
+$ cd alertmanager-mcp-server
+$ make setup
+# Run test
+$ make test
+# Run in development mode
+$ mcp dev
+$ TRANSPORT_MODE=sse mcp dev
+
+# Install in Claude Desktop
+$ make install
 ```
 
 ## 6. License
