@@ -2,7 +2,6 @@
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
-import sys
 
 from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
@@ -335,6 +334,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 
 def run_server():
     """Main entry point for the Prometheus Alertmanager MCP Server"""
+    setup_environment()
     # Get the underlying MCP server from the FastMCP instance
     mcp_server = mcp._mcp_server  # noqa: WPS437
 
