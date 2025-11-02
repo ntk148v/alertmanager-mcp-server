@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, List
 from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http import StreamableHTTPServerTransport
 from requests.compat import urljoin
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -44,7 +45,7 @@ def make_request(method="GET", route="/", **kwargs):
         (Default value = "/")
         This is the url we are making our request to.
     **kwargs : dict
-        Arbitrary keyword arguments.s
+        Arbitrary keyword arguments.
 
 
     Returns
@@ -60,7 +61,7 @@ def make_request(method="GET", route="/", **kwargs):
         else None
     )
     response = requests.request(
-        method=method.upper(), url=route, auth=auth, **kwargs
+        method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
     )
     response.raise_for_status()
     return response.json()
@@ -332,6 +333,59 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     )
 
 
+def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
+    """Create a Starlette application that serves the Streamable HTTP transport.
+
+    This starts the MCP server inside an application startup task using the
+    transport.connect() context manager so the transport's in-memory streams
+    are connected to the MCP server. The transport's ASGI handler is mounted
+    at the '/mcp' path for GET/POST/DELETE requests.
+    """
+    transport = StreamableHTTPServerTransport(None)
+
+    routes = [
+        Mount("/mcp", app=transport.handle_request),
+    ]
+
+    app = Starlette(debug=debug, routes=routes)
+
+    async def _startup() -> None:
+        # Run the MCP server in a background asyncio task so the lifespan
+        # event doesn't block. Store the task on app.state so shutdown can
+        # cancel it.
+        import asyncio
+
+        async def _run_mcp() -> None:
+            # Create the transport-backed streams and run the MCP server
+            async with transport.connect() as (read_stream, write_stream):
+                await mcp_server.run(
+                    read_stream, write_stream, mcp_server.create_initialization_options()
+                )
+
+        app.state._mcp_task = asyncio.create_task(_run_mcp())
+
+    async def _shutdown() -> None:
+        task = getattr(app.state, "_mcp_task", None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                # Task cancelled or errored during shutdown is fine
+                pass
+
+        # Attempt to terminate the transport cleanly
+        try:
+            await transport.terminate()
+        except Exception:
+            pass
+
+    app.add_event_handler("startup", _startup)
+    app.add_event_handler("shutdown", _shutdown)
+
+    return app
+
+
 def run_server():
     """Main entry point for the Prometheus Alertmanager MCP Server"""
     setup_environment()
@@ -343,31 +397,52 @@ def run_server():
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(
         description='Run MCP server with configurable transport')
+
+    # Allow configuring defaults from environment variables. CLI arguments
+    # (when provided) will override these environment values.
+    env_transport = os.environ.get("MCP_TRANSPORT")
+    env_host = os.environ.get("MCP_HOST")
+    env_port = os.environ.get("MCP_PORT")
+
+    transport_default = env_transport if env_transport is not None else 'stdio'
+    host_default = env_host if env_host is not None else '0.0.0.0'
+    try:
+        port_default = int(env_port) if env_port is not None else 8000
+    except (TypeError, ValueError):
+        print(f"Invalid MCP_PORT value '{env_port}', falling back to 8000")
+        port_default = 8000
+
     # Allow choosing between stdio and SSE transport modes
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio',
-                        help='Transport mode (stdio or sse)')
+    parser.add_argument('--transport', choices=['stdio', 'http', 'sse'], default=transport_default,
+                        help='Transport mode (stdio, http or sse) — can also be set via $MCP_TRANSPORT')
     # Host configuration for SSE mode
-    parser.add_argument('--host', default='0.0.0.0',
-                        help='Host to bind to (for SSE mode)')
+    parser.add_argument('--host', default=host_default,
+                        help='Host to bind to (for SSE mode) — can also be set via $MCP_HOST')
     # Port configuration for SSE mode
-    parser.add_argument('--port', type=int, default=8000,
-                        help='Port to listen on (for SSE mode)')
+    parser.add_argument('--port', type=int, default=port_default,
+                        help='Port to listen on (for SSE mode) — can also be set via $MCP_PORT')
     args = parser.parse_args()
     print("\nStarting Prometheus Alertmanager MCP Server...")
 
     # Launch the server with the selected transport mode
-    if args.transport == 'stdio':
-        print("Running server with stdio transport (default)")
-        # Run with stdio transport (default)
-        # This mode communicates through standard input/output
-        mcp.run(transport='stdio')
-    else:
+    if args.transport == 'sse':
         print("Running server with SSE transport (web-based)")
         # Run with SSE transport (web-based)
         # Create a Starlette app to serve the MCP server
         starlette_app = create_starlette_app(mcp_server, debug=True)
         # Start the web server with the configured host and port
         uvicorn.run(starlette_app, host=args.host, port=args.port)
+    elif args.transport == 'http':
+        print("Running server with http transport (streamable HTTP)")
+        # Run with streamable-http transport served by uvicorn so host/port
+        # CLI/env variables control the listening socket (same pattern as SSE).
+        starlette_app = create_streamable_app(mcp_server, debug=True)
+        uvicorn.run(starlette_app, host=args.host, port=args.port)
+    else:
+        print("Running server with stdio transport (default)")
+        # Run with stdio transport (default)
+        # This mode communicates through standard input/output
+        mcp.run(transport='stdio')
 
 
 if __name__ == "__main__":

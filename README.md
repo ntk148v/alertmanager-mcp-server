@@ -69,6 +69,32 @@ ALERTMANAGER_USERNAME=your_username  # optional
 ALERTMANAGER_PASSWORD=your_password  # optional
 ```
 
+#### Transport configuration
+
+You can control how the MCP server communicates with clients using the transport options and host/port settings. These can be set either with command-line flags (which take precedence) or with environment variables.
+
+- MCP_TRANSPORT: Transport mode. One of `stdio`, `http`, or `sse`. Default: `stdio`.
+- MCP_HOST: Host/interface to bind when running `http` or `sse` transports (used by the embedded uvicorn server). Default: `0.0.0.0`.
+- MCP_PORT: Port to listen on when running `http` or `sse` transports. Default: `8000`.
+
+Examples:
+
+Use environment variables to set defaults (CLI flags still override):
+
+```bash
+MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=8080 python3 -m src.alertmanager_mcp_server.server
+```
+
+Or pass flags directly to override env vars:
+
+```bash
+python3 -m src.alertmanager_mcp_server.server --transport http --host 127.0.0.1 --port 9000
+```
+
+Notes:
+- The `stdio` transport communicates over standard input/output and ignores host/port.
+- The `http` (streamable HTTP) and `sse` transports are served via an ASGI app (uvicorn) so host/port are respected when using those transports.
+
 - Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
 ```json
