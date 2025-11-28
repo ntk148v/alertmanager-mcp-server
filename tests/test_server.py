@@ -353,7 +353,14 @@ async def test_get_silences_pagination_custom_count_offset(mock_make_request):
 @pytest.mark.asyncio
 async def test_get_silences_pagination_max_count(mock_make_request):
     """Test get_silences with count exceeding maximum (50)"""
-    # Create 100 mock silences
+    # Request 100 items should return an error
+    result = await server.get_silences(count=100)
+    assert "error" in result
+    assert "100" in result["error"]
+    assert "50" in result["error"]
+    assert "offset" in result["error"].lower()
+
+    # Verify that requesting exactly at the limit works
     mock_silences = [
         {
             "id": f"silence{i}",
@@ -368,14 +375,10 @@ async def test_get_silences_pagination_max_count(mock_make_request):
     ]
     mock_make_request.return_value = mock_silences
 
-    # Request 100 items but should be capped at 50
-    result = await server.get_silences(count=100)
+    result = await server.get_silences(count=50)
+    assert "error" not in result
     assert len(result["data"]) == 50
     assert result["pagination"]["total"] == 100
-    assert result["pagination"]["offset"] == 0
-    assert result["pagination"]["count"] == 50
-    assert result["pagination"]["requested_count"] == 50  # Capped at 50
-    assert result["pagination"]["has_more"] is True
 
 
 @pytest.mark.asyncio
@@ -459,7 +462,14 @@ async def test_get_alerts_pagination_custom_count_offset(mock_make_request):
 @pytest.mark.asyncio
 async def test_get_alerts_pagination_max_count(mock_make_request):
     """Test get_alerts with count exceeding maximum (50)"""
-    # Create 100 mock alerts
+    # Request 100 items should return an error
+    result = await server.get_alerts(count=100)
+    assert "error" in result
+    assert "100" in result["error"]
+    assert "50" in result["error"]
+    assert "offset" in result["error"].lower()
+
+    # Verify that requesting exactly at the limit works
     mock_alerts = [
         {
             "labels": {"alertname": f"Alert{i}"},
@@ -472,14 +482,10 @@ async def test_get_alerts_pagination_max_count(mock_make_request):
     ]
     mock_make_request.return_value = mock_alerts
 
-    # Request 100 items but should be capped at 50
-    result = await server.get_alerts(count=100)
+    result = await server.get_alerts(count=50)
+    assert "error" not in result
     assert len(result["data"]) == 50
     assert result["pagination"]["total"] == 100
-    assert result["pagination"]["offset"] == 0
-    assert result["pagination"]["count"] == 50
-    assert result["pagination"]["requested_count"] == 50  # Capped at 50
-    assert result["pagination"]["has_more"] is True
 
 
 @pytest.mark.asyncio
@@ -553,7 +559,15 @@ async def test_get_alert_groups_pagination_custom_count_offset(mock_make_request
 @pytest.mark.asyncio
 async def test_get_alert_groups_pagination_max_count(mock_make_request):
     """Test get_alert_groups with count exceeding maximum (10)"""
-    # Create 25 mock alert groups
+    # Request 20 items should return an error
+    result = await server.get_alert_groups(count=20)
+    assert "error" in result
+    assert "20" in result["error"]
+    assert "10" in result["error"]
+    assert "offset" in result["error"].lower()
+    assert "large" in result["error"].lower()  # Should mention that groups are large
+
+    # Verify that requesting exactly at the limit works
     mock_groups = [
         {
             "labels": {"severity": f"severity{i}"},
@@ -564,14 +578,10 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
     ]
     mock_make_request.return_value = mock_groups
 
-    # Request 20 items but should be capped at 10
-    result = await server.get_alert_groups(count=20)
+    result = await server.get_alert_groups(count=10)
+    assert "error" not in result
     assert len(result["data"]) == 10
     assert result["pagination"]["total"] == 25
-    assert result["pagination"]["offset"] == 0
-    assert result["pagination"]["count"] == 10
-    assert result["pagination"]["requested_count"] == 10  # Capped at 10
-    assert result["pagination"]["has_more"] is True
 
 
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)

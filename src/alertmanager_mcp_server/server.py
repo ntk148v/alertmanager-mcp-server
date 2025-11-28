@@ -117,8 +117,14 @@ async def get_silences(filter: Optional[str] = None,
         - pagination: Metadata about pagination (total, offset, count, has_more)
           Use the 'has_more' flag to determine if additional pages are available.
     """
-    # Validate and cap count at 50
-    count = min(count, 50)
+    # Validate count parameter
+    MAX_COUNT = 50
+    if count > MAX_COUNT:
+        return {
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
+                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+        }
 
     params = None
     if filter:
@@ -238,8 +244,14 @@ async def get_alerts(filter: Optional[str] = None,
         - pagination: Metadata about pagination (total, offset, count, has_more)
           Use the 'has_more' flag to determine if additional pages are available.
     """
-    # Validate and cap count at 50
-    count = min(count, 50)
+    # Validate count parameter
+    MAX_COUNT = 50
+    if count > MAX_COUNT:
+        return {
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
+                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+        }
 
     params = {"active": True}
     if filter:
@@ -328,8 +340,15 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         - pagination: Metadata about pagination (total, offset, count, has_more)
           Use the 'has_more' flag to determine if additional pages are available.
     """
-    # Validate and cap count at 10 (alert groups are larger objects)
-    count = min(count, 10)
+    # Validate count parameter (alert groups are larger objects)
+    MAX_COUNT = 10
+    if count > MAX_COUNT:
+        return {
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
+                    f"Alert groups can be very large as they contain all alerts within each group. "
+                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+        }
 
     params = {"active": True}
     if silenced is not None:
