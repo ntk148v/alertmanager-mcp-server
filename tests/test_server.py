@@ -461,12 +461,12 @@ async def test_get_alerts_pagination_custom_count_offset(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_alerts_pagination_max_count(mock_make_request):
-    """Test get_alerts with count exceeding maximum (50)"""
-    # Request 100 items should return an error
-    result = await server.get_alerts(count=100)
+    """Test get_alerts with count exceeding maximum (25)"""
+    # Request 50 items should return an error
+    result = await server.get_alerts(count=50)
     assert "error" in result
-    assert "100" in result["error"]
     assert "50" in result["error"]
+    assert "25" in result["error"]
     assert "offset" in result["error"].lower()
 
     # Verify that requesting exactly at the limit works
@@ -478,14 +478,14 @@ async def test_get_alerts_pagination_max_count(mock_make_request):
             "endsAt": "2025-05-15T00:00:00Z",
             "status": {"state": "active"}
         }
-        for i in range(100)
+        for i in range(50)
     ]
     mock_make_request.return_value = mock_alerts
 
-    result = await server.get_alerts(count=50)
+    result = await server.get_alerts(count=25)
     assert "error" not in result
-    assert len(result["data"]) == 50
-    assert result["pagination"]["total"] == 100
+    assert len(result["data"]) == 25
+    assert result["pagination"]["total"] == 50
 
 
 @pytest.mark.asyncio

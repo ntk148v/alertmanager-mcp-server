@@ -182,7 +182,7 @@ The MCP server exposes tools for querying and managing Alertmanager, following [
 - **Get status**: `get_status()`
 - **List alerts**: `get_alerts(filter, silenced, inhibited, active, count, offset)`
   - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
-  - `count`: Number of alerts per page (default: 10, max: 50)
+  - `count`: Number of alerts per page (default: 10, max: 25)
   - `offset`: Number of alerts to skip (default: 0)
   - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
 - **List silences**: `get_silences(filter, count, offset)`

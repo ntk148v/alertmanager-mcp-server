@@ -230,7 +230,7 @@ async def get_alerts(filter: Optional[str] = None,
     active
         If true, include active alerts.
     count
-        Number of alerts to return per page (default: 10, max: 50).
+        Number of alerts to return per page (default: 10, max: 25).
     offset
         Number of alerts to skip before returning results (default: 0).
         To paginate through all results, make multiple calls with increasing
@@ -245,7 +245,7 @@ async def get_alerts(filter: Optional[str] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate count parameter
-    MAX_COUNT = 50
+    MAX_COUNT = 25
     if count > MAX_COUNT:
         return {
             "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
