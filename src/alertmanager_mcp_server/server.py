@@ -294,7 +294,7 @@ async def post_alerts(alerts: List[Dict]):
 async def get_alert_groups(silenced: Optional[bool] = None,
                            inhibited: Optional[bool] = None,
                            active: Optional[bool] = None,
-                           count: int = 10,
+                           count: int = 5,
                            offset: int = 0):
     """Get a list of alert groups
 
@@ -307,7 +307,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
     active
         If true, include active alerts.
     count
-        Number of alert groups to return per page (default: 10, max: 50).
+        Number of alert groups to return per page (default: 5, max: 10).
+        Alert groups can be large as they contain all alerts within the group.
     offset
         Number of alert groups to skip before returning results (default: 0).
 
@@ -318,8 +319,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         - data: List of AlertGroup objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
     """
-    # Validate and cap count at 50
-    count = min(count, 50)
+    # Validate and cap count at 10 (alert groups are larger objects)
+    count = min(count, 10)
 
     params = {"active": True}
     if silenced is not None:

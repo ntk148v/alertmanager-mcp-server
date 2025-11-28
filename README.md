@@ -195,9 +195,10 @@ The MCP server exposes tools for querying and managing Alertmanager, following [
 - **List receivers**: `get_receivers()`
 - **List alert groups**: `get_alert_groups(silenced, inhibited, active, count, offset)`
   - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
-  - `count`: Number of alert groups per page (default: 10, max: 50)
+  - `count`: Number of alert groups per page (default: 5, max: 10)
   - `offset`: Number of alert groups to skip (default: 0)
   - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
+  - Note: Alert groups have lower limits because they contain all alerts within each group
 
 ### Pagination Benefits
 
