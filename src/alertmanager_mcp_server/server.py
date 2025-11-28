@@ -176,7 +176,9 @@ async def delete_silence(silence_id: str):
 async def get_alerts(filter: Optional[str] = None,
                      silenced: Optional[bool] = None,
                      inhibited: Optional[bool] = None,
-                     active: Optional[bool] = None):
+                     active: Optional[bool] = None,
+                     count: int = 10,
+                     offset: int = 0):
     """Get a list of alerts currently in Alertmanager.
 
     Params
@@ -189,12 +191,21 @@ async def get_alerts(filter: Optional[str] = None,
         If true, include inhibited alerts.
     active
         If true, include active alerts.
+    count
+        Number of alerts to return per page (default: 10, max: 100).
+    offset
+        Number of alerts to skip before returning results (default: 0).
 
     Returns
     -------
-    list
-        Return a list of Alert objects from Alertmanager instance.
+    dict
+        A dictionary containing:
+        - data: List of Alert objects for the current page
+        - pagination: Metadata about pagination (total, offset, count, has_more)
     """
+    # Validate and cap count at 100
+    count = min(count, 100)
+
     params = {"active": True}
     if filter:
         params = {"filter": filter}
@@ -204,7 +215,26 @@ async def get_alerts(filter: Optional[str] = None,
         params["inhibited"] = inhibited
     if active is not None:
         params["active"] = active
-    return make_request(method="GET", route="/api/v2/alerts", params=params)
+
+    # Get all alerts from the API
+    all_alerts = make_request(method="GET", route="/api/v2/alerts", params=params)
+
+    # Apply pagination
+    total = len(all_alerts)
+    end_index = offset + count
+    paginated_alerts = all_alerts[offset:end_index]
+    has_more = end_index < total
+
+    return {
+        "data": paginated_alerts,
+        "pagination": {
+            "total": total,
+            "offset": offset,
+            "count": len(paginated_alerts),
+            "requested_count": count,
+            "has_more": has_more
+        }
+    }
 
 
 @mcp.tool(description="Create new alerts")
@@ -234,7 +264,9 @@ async def post_alerts(alerts: List[Dict]):
 @mcp.tool(description="Get a list of alert groups")
 async def get_alert_groups(silenced: Optional[bool] = None,
                            inhibited: Optional[bool] = None,
-                           active: Optional[bool] = None):
+                           active: Optional[bool] = None,
+                           count: int = 10,
+                           offset: int = 0):
     """Get a list of alert groups
 
     Params
@@ -245,12 +277,21 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         If true, include inhibited alerts.
     active
         If true, include active alerts.
+    count
+        Number of alert groups to return per page (default: 10, max: 100).
+    offset
+        Number of alert groups to skip before returning results (default: 0).
 
     Returns
     -------
-    list
-        Return a list of AlertGroup objects from Alertmanager instance.
+    dict
+        A dictionary containing:
+        - data: List of AlertGroup objects for the current page
+        - pagination: Metadata about pagination (total, offset, count, has_more)
     """
+    # Validate and cap count at 100
+    count = min(count, 100)
+
     params = {"active": True}
     if silenced is not None:
         params["silenced"] = silenced
@@ -258,8 +299,27 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         params["inhibited"] = inhibited
     if active is not None:
         params["active"] = active
-    return make_request(method="GET", route="/api/v2/alerts/groups",
-                        params=params)
+
+    # Get all alert groups from the API
+    all_groups = make_request(method="GET", route="/api/v2/alerts/groups",
+                              params=params)
+
+    # Apply pagination
+    total = len(all_groups)
+    end_index = offset + count
+    paginated_groups = all_groups[offset:end_index]
+    has_more = end_index < total
+
+    return {
+        "data": paginated_groups,
+        "pagination": {
+            "total": total,
+            "offset": offset,
+            "count": len(paginated_groups),
+            "requested_count": count,
+            "has_more": has_more
+        }
+    }
 
 
 def setup_environment():
