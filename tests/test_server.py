@@ -340,8 +340,8 @@ async def test_get_alerts_pagination_custom_count_offset(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_alerts_pagination_max_count(mock_make_request):
-    """Test get_alerts with count exceeding maximum (100)"""
-    # Create 150 mock alerts
+    """Test get_alerts with count exceeding maximum (50)"""
+    # Create 100 mock alerts
     mock_alerts = [
         {
             "labels": {"alertname": f"Alert{i}"},
@@ -350,17 +350,17 @@ async def test_get_alerts_pagination_max_count(mock_make_request):
             "endsAt": "2025-05-15T00:00:00Z",
             "status": {"state": "active"}
         }
-        for i in range(150)
+        for i in range(100)
     ]
     mock_make_request.return_value = mock_alerts
 
-    # Request 150 items but should be capped at 100
-    result = await server.get_alerts(count=150)
-    assert len(result["data"]) == 100
-    assert result["pagination"]["total"] == 150
+    # Request 100 items but should be capped at 50
+    result = await server.get_alerts(count=100)
+    assert len(result["data"]) == 50
+    assert result["pagination"]["total"] == 100
     assert result["pagination"]["offset"] == 0
-    assert result["pagination"]["count"] == 100
-    assert result["pagination"]["requested_count"] == 100  # Capped at 100
+    assert result["pagination"]["count"] == 50
+    assert result["pagination"]["requested_count"] == 50  # Capped at 50
     assert result["pagination"]["has_more"] is True
 
 

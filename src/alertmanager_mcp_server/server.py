@@ -192,7 +192,7 @@ async def get_alerts(filter: Optional[str] = None,
     active
         If true, include active alerts.
     count
-        Number of alerts to return per page (default: 10, max: 100).
+        Number of alerts to return per page (default: 10, max: 50).
     offset
         Number of alerts to skip before returning results (default: 0).
 
@@ -203,8 +203,8 @@ async def get_alerts(filter: Optional[str] = None,
         - data: List of Alert objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
     """
-    # Validate and cap count at 100
-    count = min(count, 100)
+    # Validate and cap count at 50
+    count = min(count, 50)
 
     params = {"active": True}
     if filter:
@@ -278,7 +278,7 @@ async def get_alert_groups(silenced: Optional[bool] = None,
     active
         If true, include active alerts.
     count
-        Number of alert groups to return per page (default: 10, max: 100).
+        Number of alert groups to return per page (default: 10, max: 50).
     offset
         Number of alert groups to skip before returning results (default: 0).
 
@@ -289,8 +289,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         - data: List of AlertGroup objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
     """
-    # Validate and cap count at 100
-    count = min(count, 100)
+    # Validate and cap count at 50
+    count = min(count, 50)
 
     params = {"active": True}
     if silenced is not None:
