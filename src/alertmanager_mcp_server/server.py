@@ -106,6 +106,8 @@ async def get_silences(filter: Optional[str] = None,
         Number of silences to return per page (default: 10, max: 50).
     offset
         Number of silences to skip before returning results (default: 0).
+        To paginate through all results, make multiple calls with increasing
+        offset values (e.g., offset=0, offset=10, offset=20, etc.).
 
     Returns
     -------
@@ -113,6 +115,7 @@ async def get_silences(filter: Optional[str] = None,
         A dictionary containing:
         - data: List of Silence objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
+          Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate and cap count at 50
     count = min(count, 50)
@@ -224,6 +227,8 @@ async def get_alerts(filter: Optional[str] = None,
         Number of alerts to return per page (default: 10, max: 50).
     offset
         Number of alerts to skip before returning results (default: 0).
+        To paginate through all results, make multiple calls with increasing
+        offset values (e.g., offset=0, offset=10, offset=20, etc.).
 
     Returns
     -------
@@ -231,6 +236,7 @@ async def get_alerts(filter: Optional[str] = None,
         A dictionary containing:
         - data: List of Alert objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
+          Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate and cap count at 50
     count = min(count, 50)
@@ -311,6 +317,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         Alert groups can be large as they contain all alerts within the group.
     offset
         Number of alert groups to skip before returning results (default: 0).
+        To paginate through all results, make multiple calls with increasing
+        offset values (e.g., offset=0, offset=5, offset=10, etc.).
 
     Returns
     -------
@@ -318,6 +326,7 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         A dictionary containing:
         - data: List of AlertGroup objects for the current page
         - pagination: Metadata about pagination (total, offset, count, has_more)
+          Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate and cap count at 10 (alert groups are larger objects)
     count = min(count, 10)
