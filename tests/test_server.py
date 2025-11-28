@@ -503,31 +503,7 @@ async def test_get_alerts_pagination_empty_results(mock_make_request):
 
 @pytest.mark.asyncio
 async def test_get_alert_groups_pagination_default(mock_make_request):
-    """Test get_alert_groups with default pagination (5 items)"""
-    # Create 25 mock alert groups
-    mock_groups = [
-        {
-            "labels": {"severity": f"severity{i}"},
-            "blocks": [],
-            "alerts": []
-        }
-        for i in range(25)
-    ]
-    mock_make_request.return_value = mock_groups
-
-    # Test first page (default count=5, offset=0)
-    result = await server.get_alert_groups()
-    assert len(result["data"]) == 5
-    assert result["pagination"]["total"] == 25
-    assert result["pagination"]["offset"] == 0
-    assert result["pagination"]["count"] == 5
-    assert result["pagination"]["requested_count"] == 5
-    assert result["pagination"]["has_more"] is True
-
-
-@pytest.mark.asyncio
-async def test_get_alert_groups_pagination_custom_count_offset(mock_make_request):
-    """Test get_alert_groups with custom count and offset"""
+    """Test get_alert_groups with default pagination (3 items)"""
     # Create 15 mock alert groups
     mock_groups = [
         {
@@ -539,31 +515,55 @@ async def test_get_alert_groups_pagination_custom_count_offset(mock_make_request
     ]
     mock_make_request.return_value = mock_groups
 
-    # Test second page (count=5, offset=5)
-    result = await server.get_alert_groups(count=5, offset=5)
-    assert len(result["data"]) == 5
+    # Test first page (default count=3, offset=0)
+    result = await server.get_alert_groups()
+    assert len(result["data"]) == 3
     assert result["pagination"]["total"] == 15
-    assert result["pagination"]["offset"] == 5
-    assert result["pagination"]["count"] == 5
+    assert result["pagination"]["offset"] == 0
+    assert result["pagination"]["count"] == 3
+    assert result["pagination"]["requested_count"] == 3
     assert result["pagination"]["has_more"] is True
 
-    # Test last page (count=5, offset=10)
-    result = await server.get_alert_groups(count=5, offset=10)
-    assert len(result["data"]) == 5
-    assert result["pagination"]["total"] == 15
-    assert result["pagination"]["offset"] == 10
-    assert result["pagination"]["count"] == 5
+
+@pytest.mark.asyncio
+async def test_get_alert_groups_pagination_custom_count_offset(mock_make_request):
+    """Test get_alert_groups with custom count and offset"""
+    # Create 12 mock alert groups
+    mock_groups = [
+        {
+            "labels": {"severity": f"severity{i}"},
+            "blocks": [],
+            "alerts": []
+        }
+        for i in range(12)
+    ]
+    mock_make_request.return_value = mock_groups
+
+    # Test second page (count=3, offset=3)
+    result = await server.get_alert_groups(count=3, offset=3)
+    assert len(result["data"]) == 3
+    assert result["pagination"]["total"] == 12
+    assert result["pagination"]["offset"] == 3
+    assert result["pagination"]["count"] == 3
+    assert result["pagination"]["has_more"] is True
+
+    # Test last page (count=3, offset=9)
+    result = await server.get_alert_groups(count=3, offset=9)
+    assert len(result["data"]) == 3
+    assert result["pagination"]["total"] == 12
+    assert result["pagination"]["offset"] == 9
+    assert result["pagination"]["count"] == 3
     assert result["pagination"]["has_more"] is False
 
 
 @pytest.mark.asyncio
 async def test_get_alert_groups_pagination_max_count(mock_make_request):
-    """Test get_alert_groups with count exceeding maximum (10)"""
-    # Request 20 items should return an error
-    result = await server.get_alert_groups(count=20)
+    """Test get_alert_groups with count exceeding maximum (5)"""
+    # Request 10 items should return an error
+    result = await server.get_alert_groups(count=10)
     assert "error" in result
-    assert "20" in result["error"]
     assert "10" in result["error"]
+    assert "5" in result["error"]
     assert "offset" in result["error"].lower()
     assert "large" in result["error"].lower()  # Should mention that groups are large
 
@@ -574,14 +574,14 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
             "blocks": [],
             "alerts": []
         }
-        for i in range(25)
+        for i in range(15)
     ]
     mock_make_request.return_value = mock_groups
 
-    result = await server.get_alert_groups(count=10)
+    result = await server.get_alert_groups(count=5)
     assert "error" not in result
-    assert len(result["data"]) == 10
-    assert result["pagination"]["total"] == 25
+    assert len(result["data"]) == 5
+    assert result["pagination"]["total"] == 15
 
 
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)

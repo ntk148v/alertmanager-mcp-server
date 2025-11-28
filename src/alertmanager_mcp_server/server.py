@@ -312,7 +312,7 @@ async def post_alerts(alerts: List[Dict]):
 async def get_alert_groups(silenced: Optional[bool] = None,
                            inhibited: Optional[bool] = None,
                            active: Optional[bool] = None,
-                           count: int = 5,
+                           count: int = 3,
                            offset: int = 0):
     """Get a list of alert groups
 
@@ -325,12 +325,12 @@ async def get_alert_groups(silenced: Optional[bool] = None,
     active
         If true, include active alerts.
     count
-        Number of alert groups to return per page (default: 5, max: 10).
+        Number of alert groups to return per page (default: 3, max: 5).
         Alert groups can be large as they contain all alerts within the group.
     offset
         Number of alert groups to skip before returning results (default: 0).
         To paginate through all results, make multiple calls with increasing
-        offset values (e.g., offset=0, offset=5, offset=10, etc.).
+        offset values (e.g., offset=0, offset=3, offset=6, etc.).
 
     Returns
     -------
@@ -341,7 +341,7 @@ async def get_alert_groups(silenced: Optional[bool] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate count parameter (alert groups are larger objects)
-    MAX_COUNT = 10
+    MAX_COUNT = 5
     if count > MAX_COUNT:
         return {
             "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
