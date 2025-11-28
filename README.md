@@ -185,7 +185,11 @@ The MCP server exposes tools for querying and managing Alertmanager, following [
   - `count`: Number of alerts per page (default: 10, max: 50)
   - `offset`: Number of alerts to skip (default: 0)
   - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
-- **List silences**: `get_silences(filter)`
+- **List silences**: `get_silences(filter, count, offset)`
+  - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
+  - `count`: Number of silences per page (default: 10, max: 50)
+  - `offset`: Number of silences to skip (default: 0)
+  - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
 - **Create silence**: `post_silence(silence_dict)`
 - **Delete silence**: `delete_silence(silence_id)`
 - **List receivers**: `get_receivers()`
@@ -197,7 +201,7 @@ The MCP server exposes tools for querying and managing Alertmanager, following [
 
 ### Pagination Benefits
 
-When working with environments that have many alerts, the pagination feature helps:
+When working with environments that have many alerts, silences, or alert groups, the pagination feature helps:
 - **Prevent context overflow**: By default, only 10 items are returned per request
 - **Efficient browsing**: LLMs can iterate through results using `offset` and `count` parameters
 - **Smart limits**: Maximum of 50 items per page prevents excessive context usage

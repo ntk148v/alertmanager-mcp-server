@@ -93,24 +93,53 @@ async def get_receivers():
 
 
 @mcp.tool(description="Get list of all silences")
-async def get_silences(filter: Optional[str] = None):
+async def get_silences(filter: Optional[str] = None,
+                       count: int = 10,
+                       offset: int = 0):
     """Get list of all silences
 
     Parameters
     ----------
     filter
         Filtering query (e.g. alertname=~'.*CPU.*')"),
+    count
+        Number of silences to return per page (default: 10, max: 50).
+    offset
+        Number of silences to skip before returning results (default: 0).
 
     Returns
     -------
-    list:
-        Return a list of Silence objects from Alertmanager instance.
+    dict
+        A dictionary containing:
+        - data: List of Silence objects for the current page
+        - pagination: Metadata about pagination (total, offset, count, has_more)
     """
+    # Validate and cap count at 50
+    count = min(count, 50)
 
     params = None
     if filter:
         params = {"filter": filter}
-    return make_request(method="GET", route="/api/v2/silences", params=params)
+
+    # Get all silences from the API
+    all_silences = make_request(method="GET", route="/api/v2/silences", params=params)
+
+    # Apply pagination
+    total = len(all_silences)
+    end_index = offset + count
+    paginated_silences = all_silences[offset:end_index]
+    has_more = end_index < total
+
+    return {
+        "data": paginated_silences,
+        "pagination": {
+            "total": total,
+            "offset": offset,
+            "count": len(paginated_silences),
+            "requested_count": count,
+            "has_more": has_more
+        }
+    }
 
 
 @mcp.tool(description="Post a new silence or update an existing one")

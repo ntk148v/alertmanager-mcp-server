@@ -100,7 +100,7 @@ async def test_get_receivers_tool(mock_make_request):
 @pytest.mark.asyncio
 async def test_get_silences_tool(mock_make_request):
     # /silences returns list of Silence objects, now supports filter param
-    mock_make_request.return_value = [
+    mock_silences = [
         {
             "id": "123",
             "status": {"state": "active"},
@@ -111,11 +111,19 @@ async def test_get_silences_tool(mock_make_request):
             "endsAt": "2025-05-15T00:00:00Z"
         }
     ]
+    mock_make_request.return_value = mock_silences
     # test with no filter
     result = await server.get_silences()
     mock_make_request.assert_called_with(
         method="GET", route="/api/v2/silences", params=None)
-    assert result[0]["status"]["state"] == "active"
+    # Check pagination structure
+    assert "data" in result
+    assert "pagination" in result
+    assert result["data"][0]["status"]["state"] == "active"
+    assert result["pagination"]["total"] == 1
+    assert result["pagination"]["count"] == 1
+    assert result["pagination"]["offset"] == 0
+    assert result["pagination"]["has_more"] is False
     # test with filter
     await server.get_silences(filter="alertname=HighCPU")
     mock_make_request.assert_called_with(
@@ -271,6 +279,116 @@ def test_setup_environment_no_url(monkeypatch):
     # Reload config
     importlib.reload(server)
     assert server.setup_environment() is False
+
+
+@pytest.mark.asyncio
+async def test_get_silences_pagination_default(mock_make_request):
+    """Test get_silences with default pagination (10 items)"""
+    # Create 25 mock silences
+    mock_silences = [
+        {
+            "id": f"silence{i}",
+            "status": {"state": "active"},
+            "matchers": [{"name": "alertname", "value": f"Alert{i}", "isRegex": False}],
+            "createdBy": "test",
+            "comment": f"Silence {i}",
+            "startsAt": "2025-05-14T00:00:00Z",
+            "endsAt": "2025-05-15T00:00:00Z"
+        }
+        for i in range(25)
+    ]
+    mock_make_request.return_value = mock_silences
+
+    # Test first page (default count=10, offset=0)
+    result = await server.get_silences()
+    assert len(result["data"]) == 10
+    assert result["pagination"]["total"] == 25
+    assert result["pagination"]["offset"] == 0
+    assert result["pagination"]["count"] == 10
+    assert result["pagination"]["requested_count"] == 10
+    assert result["pagination"]["has_more"] is True
+    assert result["data"][0]["id"] == "silence0"
+    assert result["data"][9]["id"] == "silence9"
+
+
+@pytest.mark.asyncio
+async def test_get_silences_pagination_custom_count_offset(mock_make_request):
+    """Test get_silences with custom count and offset"""
+    # Create 25 mock silences
+    mock_silences = [
+        {
+            "id": f"silence{i}",
+            "status": {"state": "active"},
+            "matchers": [{"name": "alertname", "value": f"Alert{i}", "isRegex": False}],
+            "createdBy": "test",
+            "comment": f"Silence {i}",
+            "startsAt": "2025-05-14T00:00:00Z",
+            "endsAt": "2025-05-15T00:00:00Z"
+        }
+        for i in range(25)
+    ]
+    mock_make_request.return_value = mock_silences
+
+    # Test second page (count=10, offset=10)
+    result = await server.get_silences(count=10, offset=10)
+    assert len(result["data"]) == 10
+    assert result["pagination"]["total"] == 25
+    assert result["pagination"]["offset"] == 10
+    assert result["pagination"]["count"] == 10
+    assert result["pagination"]["has_more"] is True
+    assert result["data"][0]["id"] == "silence10"
+    assert result["data"][9]["id"] == "silence19"
+
+    # Test last page (count=10, offset=20)
+    result = await server.get_silences(count=10, offset=20)
+    assert len(result["data"]) == 5  # Only 5 items left
+    assert result["pagination"]["total"] == 25
+    assert result["pagination"]["offset"] == 20
+    assert result["pagination"]["count"] == 5
+    assert result["pagination"]["has_more"] is False
+    assert result["data"][0]["id"] == "silence20"
+    assert result["data"][4]["id"] == "silence24"
+
+
+@pytest.mark.asyncio
+async def test_get_silences_pagination_max_count(mock_make_request):
+    """Test get_silences with count exceeding maximum (50)"""
+    # Create 100 mock silences
+    mock_silences = [
+        {
+            "id": f"silence{i}",
+            "status": {"state": "active"},
+            "matchers": [{"name": "alertname", "value": f"Alert{i}", "isRegex": False}],
+            "createdBy": "test",
+            "comment": f"Silence {i}",
+            "startsAt": "2025-05-14T00:00:00Z",
+            "endsAt": "2025-05-15T00:00:00Z"
+        }
+        for i in range(100)
+    ]
+    mock_make_request.return_value = mock_silences
+
+    # Request 100 items but should be capped at 50
+    result = await server.get_silences(count=100)
+    assert len(result["data"]) == 50
+    assert result["pagination"]["total"] == 100
+    assert result["pagination"]["offset"] == 0
+    assert result["pagination"]["count"] == 50
+    assert result["pagination"]["requested_count"] == 50  # Capped at 50
+    assert result["pagination"]["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_silences_pagination_empty_results(mock_make_request):
+    """Test get_silences with empty results"""
+    mock_make_request.return_value = []
+
+    result = await server.get_silences()
+    assert len(result["data"]) == 0
+    assert result["pagination"]["total"] == 0
+    assert result["pagination"]["offset"] == 0
+    assert result["pagination"]["count"] == 0
+    assert result["pagination"]["has_more"] is False
 
 
 @pytest.mark.asyncio
