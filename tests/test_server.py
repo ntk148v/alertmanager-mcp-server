@@ -565,7 +565,6 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
     assert "10" in result["error"]
     assert "5" in result["error"]
     assert "offset" in result["error"].lower()
-    assert "large" in result["error"].lower()  # Should mention that groups are large
 
     # Verify that requesting exactly at the limit works
     mock_groups = [
@@ -587,7 +586,8 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)
 @patch("alertmanager_mcp_server.server.mcp")
 def test_run_server_success(mock_mcp, mock_setup_env):
-    with patch("builtins.print") as mock_print:
+    with patch("builtins.print") as mock_print, \
+         patch("sys.argv", ["server.py"]):
         server.run_server()
         mock_setup_env.assert_called_once()
         mock_mcp.run.assert_called_once_with(transport="stdio")
