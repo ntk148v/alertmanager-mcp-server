@@ -33,6 +33,14 @@ config = AlertmanagerConfig(
     password=os.environ.get("ALERTMANAGER_PASSWORD", ""),
 )
 
+# Pagination defaults and limits (configurable via environment variables)
+DEFAULT_SILENCE_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_SILENCE_PAGE", "10"))
+MAX_SILENCE_PAGE = int(os.environ.get("ALERTMANAGER_MAX_SILENCE_PAGE", "50"))
+DEFAULT_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_PAGE", "10"))
+MAX_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_PAGE", "25"))
+DEFAULT_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_GROUP_PAGE", "3"))
+MAX_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_GROUP_PAGE", "5"))
+
 
 def make_request(method="GET", route="/", **kwargs):
     """Make HTTP request and return a requests.Response object.
@@ -94,7 +102,7 @@ async def get_receivers():
 
 @mcp.tool(description="Get list of all silences")
 async def get_silences(filter: Optional[str] = None,
-                       count: int = 10,
+                       count: int = DEFAULT_SILENCE_PAGE,
                        offset: int = 0):
     """Get list of all silences
 
@@ -118,12 +126,11 @@ async def get_silences(filter: Optional[str] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate count parameter
-    MAX_COUNT = 50
-    if count > MAX_COUNT:
+    if count > MAX_SILENCE_PAGE:
         return {
-            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
-                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
-                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_SILENCE_PAGE}). "
+                    f"Please use count <= {MAX_SILENCE_PAGE} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_SILENCE_PAGE}, offset={MAX_SILENCE_PAGE*2}, etc."
         }
 
     params = None
@@ -215,7 +222,7 @@ async def get_alerts(filter: Optional[str] = None,
                      silenced: Optional[bool] = None,
                      inhibited: Optional[bool] = None,
                      active: Optional[bool] = None,
-                     count: int = 10,
+                     count: int = DEFAULT_ALERT_PAGE,
                      offset: int = 0):
     """Get a list of alerts currently in Alertmanager.
 
@@ -245,12 +252,11 @@ async def get_alerts(filter: Optional[str] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate count parameter
-    MAX_COUNT = 25
-    if count > MAX_COUNT:
+    if count > MAX_ALERT_PAGE:
         return {
-            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
-                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
-                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_ALERT_PAGE}). "
+                    f"Please use count <= {MAX_ALERT_PAGE} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_ALERT_PAGE}, offset={MAX_ALERT_PAGE*2}, etc."
         }
 
     params = {"active": True}
@@ -312,7 +318,7 @@ async def post_alerts(alerts: List[Dict]):
 async def get_alert_groups(silenced: Optional[bool] = None,
                            inhibited: Optional[bool] = None,
                            active: Optional[bool] = None,
-                           count: int = 3,
+                           count: int = DEFAULT_ALERT_GROUP_PAGE,
                            offset: int = 0):
     """Get a list of alert groups
 
@@ -341,13 +347,12 @@ async def get_alert_groups(silenced: Optional[bool] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate count parameter (alert groups are larger objects)
-    MAX_COUNT = 5
-    if count > MAX_COUNT:
+    if count > MAX_ALERT_GROUP_PAGE:
         return {
-            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_COUNT}). "
+            "error": f"Count parameter ({count}) exceeds maximum allowed value ({MAX_ALERT_GROUP_PAGE}). "
                     f"Alert groups can be very large as they contain all alerts within each group. "
-                    f"Please use count <= {MAX_COUNT} and paginate through results using the offset parameter. "
-                    f"Example: Make multiple calls with offset=0, offset={MAX_COUNT}, offset={MAX_COUNT*2}, etc."
+                    f"Please use count <= {MAX_ALERT_GROUP_PAGE} and paginate through results using the offset parameter. "
+                    f"Example: Make multiple calls with offset=0, offset={MAX_ALERT_GROUP_PAGE}, offset={MAX_ALERT_GROUP_PAGE*2}, etc."
         }
 
     params = {"active": True}
