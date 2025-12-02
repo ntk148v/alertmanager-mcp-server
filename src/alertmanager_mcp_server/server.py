@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import os
-import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
@@ -18,10 +18,54 @@ import uvicorn
 dotenv.load_dotenv()
 mcp = FastMCP("Alertmanager MCP")
 
-# Global storage for the current request's X-Scope-OrgId header
+# ContextVar for per-request X-Scope-OrgId header
 # Used for multi-tenant Alertmanager setups (e.g., Mimir)
-_current_scope_org_id: Optional[str] = None
-_scope_org_id_lock = threading.Lock()
+# ContextVar ensures proper isolation per async context/task
+_current_scope_org_id: ContextVar[Optional[str]] = ContextVar("current_scope_org_id", default=None)
+
+
+def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
+    """Extract a header value from an ASGI scope.
+    
+    Parameters
+    ----------
+    scope : dict
+        ASGI scope dictionary containing headers
+    header_name : str
+        Header name to extract (should be lowercase, e.g. "x-scope-orgid")
+        
+    Returns
+    -------
+    Optional[str]
+        The header value if found, None otherwise
+    """
+    headers = scope.get("headers", [])
+    target = header_name.encode("latin-1")
+    for name_bytes, value_bytes in headers:
+        if name_bytes.lower() == target:
+            try:
+                return value_bytes.decode("latin-1")
+            except Exception:
+                return None
+    return None
+
+
+def extract_header_from_request(request: Request, header_name: str) -> Optional[str]:
+    """Extract a header value from a Starlette Request.
+    
+    Parameters
+    ----------
+    request : Request
+        Starlette request object
+    header_name : str
+        Header name to extract (case-insensitive)
+        
+    Returns
+    -------
+    Optional[str]
+        The header value if found, None otherwise
+    """
+    return request.headers.get(header_name)
 
 
 @dataclass
@@ -111,12 +155,10 @@ def make_request(method="GET", route="/", **kwargs):
         )
         
         # Add X-Scope-OrgId header for multi-tenant setups
-        # Priority: 1) Request header from caller, 2) Static config tenant
+        # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
         headers = kwargs.get("headers", {})
         
-        global _current_scope_org_id
-        with _scope_org_id_lock:
-            tenant_id = _current_scope_org_id or config.tenant_id
+        tenant_id = _current_scope_org_id.get() or config.tenant_id
         
         if tenant_id:
             headers["X-Scope-OrgId"] = tenant_id
@@ -388,26 +430,27 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         Args:
             request: The incoming HTTP request
         """
-        global _current_scope_org_id
+        # Extract X-Scope-OrgId header if present and set in ContextVar
+        scope_org_id = extract_header_from_request(request, "x-scope-orgid")
+        token = _current_scope_org_id.set(scope_org_id) if scope_org_id else None
         
-        # Extract X-Scope-OrgId header if present
-        scope_org_id = request.headers.get("x-scope-orgid")
-        if scope_org_id:
-            with _scope_org_id_lock:
-                _current_scope_org_id = scope_org_id
-        
-        # Connect the SSE transport to the request
-        async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
-            # Run the MCP server with the SSE streams
-            await mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp_server.create_initialization_options(),
-            )
+        try:
+            # Connect the SSE transport to the request
+            async with sse.connect_sse(
+                    request.scope,
+                    request.receive,
+                    request._send,  # noqa: SLF001
+            ) as (read_stream, write_stream):
+                # Run the MCP server with the SSE streams
+                await mcp_server.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server.create_initialization_options(),
+                )
+        finally:
+            # Reset ContextVar to restore previous value
+            if token is not None:
+                _current_scope_org_id.reset(token)
 
     # Create and return the Starlette application with routes
     return Starlette(
@@ -432,18 +475,21 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
     
     async def handle_mcp_request(scope, receive, send):
         """Wrapper to extract X-Scope-OrgId header before handling MCP request."""
-        global _current_scope_org_id
+        token = None
         
         if scope['type'] == 'http':
             # Extract X-Scope-OrgId from headers
-            for header_name, header_value in scope.get('headers', []):
-                if header_name.decode('latin-1').lower() == 'x-scope-orgid':
-                    with _scope_org_id_lock:
-                        _current_scope_org_id = header_value.decode('latin-1')
-                    break
+            scope_org_id = extract_header_from_scope(scope, "x-scope-orgid")
+            if scope_org_id:
+                token = _current_scope_org_id.set(scope_org_id)
         
-        # Pass to the actual transport handler
-        await transport.handle_request(scope, receive, send)
+        try:
+            # Pass to the actual transport handler
+            await transport.handle_request(scope, receive, send)
+        finally:
+            # Reset ContextVar to restore previous value
+            if token is not None:
+                _current_scope_org_id.reset(token)
 
     routes = [
         Mount("/mcp", app=handle_mcp_request),
