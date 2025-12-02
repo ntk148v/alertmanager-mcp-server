@@ -29,6 +29,7 @@ Prometheus Alertmanager MCP is a [Model Context Protocol](https://modelcontextpr
 ## 2. Features
 
 - [x] Query Alertmanager status, alerts, silences, receivers, and alert groups
+- [x] **Smart pagination support** to prevent LLM context window overflow when handling large numbers of alerts
 - [x] Create, update, and delete silences
 - [x] Create new alerts
 - [x] Authentication support (Basic auth via environment variables)
@@ -177,13 +178,37 @@ This configuration passes the environment variables from Claude Desktop to the D
 ## 4. Tools
 
 The MCP server exposes tools for querying and managing Alertmanager, following [its API v2](https://github.com/prometheus/alertmanager/blob/main/api/v2/openapi.yaml):
-- Get status: `get_status()`
-- List alerts: `get_alerts()`
-- List silences: `get_silences()`
-- Create silence: `post_silence(silence_dict)`
-- Delete silence: `delete_silence(silence_id)`
-- List receivers: `get_receivers()`
-- List alert groups: `get_alert_groups()`
+
+- **Get status**: `get_status()`
+- **List alerts**: `get_alerts(filter, silenced, inhibited, active, count, offset)`
+  - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
+  - `count`: Number of alerts per page (default: 10, max: 25)
+  - `offset`: Number of alerts to skip (default: 0)
+  - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
+- **List silences**: `get_silences(filter, count, offset)`
+  - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
+  - `count`: Number of silences per page (default: 10, max: 50)
+  - `offset`: Number of silences to skip (default: 0)
+  - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
+- **Create silence**: `post_silence(silence_dict)`
+- **Delete silence**: `delete_silence(silence_id)`
+- **List receivers**: `get_receivers()`
+- **List alert groups**: `get_alert_groups(silenced, inhibited, active, count, offset)`
+  - **Pagination support**: Returns paginated results to avoid overwhelming LLM context
+  - `count`: Number of alert groups per page (default: 3, max: 5)
+  - `offset`: Number of alert groups to skip (default: 0)
+  - Returns: `{ "data": [...], "pagination": { "total": N, "offset": M, "count": K, "has_more": bool } }`
+  - Note: Alert groups have lower limits because they contain all alerts within each group
+
+### Pagination Benefits
+
+When working with environments that have many alerts, silences, or alert groups, the pagination feature helps:
+- **Prevent context overflow**: By default, only 10 items are returned per request
+- **Efficient browsing**: LLMs can iterate through results using `offset` and `count` parameters
+- **Smart limits**: Maximum of 50 items per page prevents excessive context usage
+- **Clear navigation**: `has_more` flag indicates when additional pages are available
+
+Example: If you have 100 alerts, the LLM can fetch them in manageable chunks (e.g., 10 at a time) and only load what's needed for analysis.
 
 See [src/alertmanager_mcp_server/server.py](src/alertmanager_mcp_server/server.py) for full API details.
 
