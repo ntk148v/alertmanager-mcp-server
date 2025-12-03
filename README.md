@@ -33,6 +33,7 @@ Prometheus Alertmanager MCP is a [Model Context Protocol](https://modelcontextpr
 - [x] Create, update, and delete silences
 - [x] Create new alerts
 - [x] Authentication support (Basic auth via environment variables)
+- [x] Multi-tenant support (via `X-Scope-OrgId` header for Mimir/Cortex)
 - [x] Docker containerization support
 
 ## 3. Quickstart
@@ -68,7 +69,17 @@ $ git clone https://github.com/ntk148v/alertmanager-mcp-server.git
 ALERTMANAGER_URL=http://your-alertmanager:9093
 ALERTMANAGER_USERNAME=your_username  # optional
 ALERTMANAGER_PASSWORD=your_password  # optional
+ALERTMANAGER_TENANT=your_tenant_id   # optional, for multi-tenant setups
 ```
+
+#### Multi-tenant Support
+
+For multi-tenant Alertmanager deployments (e.g., Grafana Mimir, Cortex), you can specify the tenant ID in two ways:
+
+1. **Static configuration**: Set `ALERTMANAGER_TENANT` environment variable
+2. **Per-request**: Include `X-Scope-OrgId` header in requests to the MCP server
+
+The `X-Scope-OrgId` header takes precedence over the static configuration, allowing dynamic tenant switching per request.
 
 #### Transport configuration
 
@@ -144,6 +155,7 @@ $ make install
 $ docker run -e ALERTMANAGER_URL=http://your-alertmanager:9093 \
     -e ALERTMANAGER_USERNAME=your_username \
     -e ALERTMANAGER_PASSWORD=your_password \
+    -e ALERTMANAGER_TENANT=your_tenant_id \
     -p 8000:8000 ghcr.io/ntk148v/alertmanager-mcp-server
 ```
 

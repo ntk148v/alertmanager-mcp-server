@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
@@ -7,7 +8,6 @@ from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http import StreamableHTTPServerTransport
-from requests.compat import urljoin
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
@@ -18,6 +18,55 @@ import uvicorn
 dotenv.load_dotenv()
 mcp = FastMCP("Alertmanager MCP")
 
+# ContextVar for per-request X-Scope-OrgId header
+# Used for multi-tenant Alertmanager setups (e.g., Mimir)
+# ContextVar ensures proper isolation per async context/task
+_current_scope_org_id: ContextVar[Optional[str]] = ContextVar("current_scope_org_id", default=None)
+
+
+def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
+    """Extract a header value from an ASGI scope.
+    
+    Parameters
+    ----------
+    scope : dict
+        ASGI scope dictionary containing headers
+    header_name : str
+        Header name to extract (should be lowercase, e.g. "x-scope-orgid")
+        
+    Returns
+    -------
+    Optional[str]
+        The header value if found, None otherwise
+    """
+    headers = scope.get("headers", [])
+    target = header_name.encode("latin-1")
+    for name_bytes, value_bytes in headers:
+        if name_bytes.lower() == target:
+            try:
+                return value_bytes.decode("latin-1")
+            except Exception:
+                return None
+    return None
+
+
+def extract_header_from_request(request: Request, header_name: str) -> Optional[str]:
+    """Extract a header value from a Starlette Request.
+    
+    Parameters
+    ----------
+    request : Request
+        Starlette request object
+    header_name : str
+        Header name to extract (case-insensitive)
+        
+    Returns
+    -------
+    Optional[str]
+        The header value if found, None otherwise
+    """
+    return request.headers.get(header_name)
+
 
 @dataclass
 class AlertmanagerConfig:
@@ -25,12 +74,15 @@ class AlertmanagerConfig:
     # Optional credentials
     username: Optional[str] = None
     password: Optional[str] = None
+    # Optional tenant ID for multi-tenant setups
+    tenant_id: Optional[str] = None
 
 
 config = AlertmanagerConfig(
     url=os.environ.get("ALERTMANAGER_URL", ""),
     username=os.environ.get("ALERTMANAGER_USERNAME", ""),
     password=os.environ.get("ALERTMANAGER_PASSWORD", ""),
+    tenant_id=os.environ.get("ALERTMANAGER_TENANT", ""),
 )
 
 # Pagination defaults and limits (configurable via environment variables)
@@ -40,6 +92,46 @@ DEFAULT_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_PAGE", "10")
 MAX_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_PAGE", "25"))
 DEFAULT_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_GROUP_PAGE", "3"))
 MAX_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_GROUP_PAGE", "5"))
+
+
+def url_join(base: str, path: str) -> str:
+    """Join a base URL with a path, preserving the base URL's path component.
+    
+    Unlike urllib.parse.urljoin, this function preserves the path in the base URL
+    when the path argument starts with '/'. This is useful for APIs hosted at
+    subpaths (e.g., http://localhost:8080/alertmanager).
+    
+    Examples
+    --------
+    >>> url_join("http://localhost:8080/alertmanager", "/api/v2/alerts")
+    'http://localhost:8080/alertmanager/api/v2/alerts'
+    
+    >>> url_join("http://localhost:8080/alertmanager/", "/api/v2/alerts")
+    'http://localhost:8080/alertmanager/api/v2/alerts'
+    
+    >>> url_join("http://localhost:8080", "/api/v2/alerts")
+    'http://localhost:8080/api/v2/alerts'
+    
+    Parameters
+    ----------
+    base : str
+        The base URL which may include a path component
+    path : str
+        The path to append, which may or may not start with '/'
+        
+    Returns
+    -------
+    str
+        The combined URL with both base path and appended path
+    """
+    # Remove trailing slash from base if present
+    base = base.rstrip('/')
+    
+    # Remove leading slash from path if present
+    path = path.lstrip('/')
+    
+    # Combine with a single slash
+    return f"{base}/{path}"
 
 
 def make_request(method="GET", route="/", **kwargs):
@@ -62,17 +154,37 @@ def make_request(method="GET", route="/", **kwargs):
         The response from the Alertmanager API. This is a dictionary
         containing the response data.
     """
-    route = urljoin(config.url, route)
-    auth = (
-        requests.auth.HTTPBasicAuth(config.username, config.password)
-        if config.username and config.password
-        else None
-    )
-    response = requests.request(
-        method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
-    )
-    response.raise_for_status()
-    return response.json()
+    try:
+        route = url_join(config.url, route)
+        auth = (
+            requests.auth.HTTPBasicAuth(config.username, config.password)
+            if config.username and config.password
+            else None
+        )
+        
+        # Add X-Scope-OrgId header for multi-tenant setups
+        # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
+        headers = kwargs.get("headers", {})
+        
+        tenant_id = _current_scope_org_id.get() or config.tenant_id
+        
+        if tenant_id:
+            headers["X-Scope-OrgId"] = tenant_id
+        if headers:
+            kwargs["headers"] = headers
+        
+        response = requests.request(
+            method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        # Ensure we always return something (empty list is valid but might cause issues)
+        if result is None:
+            return {"message": "No data returned"}
+        return result
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
 
 
 def validate_pagination_params(count: int, offset: int, max_count: int) -> tuple[int, int, Optional[str]]:
@@ -251,7 +363,7 @@ async def get_silence(silence_id: str):
     dict:
         The Silence object from Alertmanager instance.
     """
-    return make_request(method="GET", route=urljoin("/api/v2/silences/", silence_id))
+    return make_request(method="GET", route=url_join("/api/v2/silences/", silence_id))
 
 
 @mcp.tool(description="Delete a silence by its ID")
@@ -269,7 +381,7 @@ async def delete_silence(silence_id: str):
         The response from the Alertmanager API.
     """
     return make_request(
-        method="DELETE", route=urljoin("/api/v2/silences/", silence_id)
+        method="DELETE", route=url_join("/api/v2/silences/", silence_id)
     )
 
 
@@ -425,6 +537,15 @@ def setup_environment():
         print("  Authentication: Using basic auth")
     else:
         print("  Authentication: None (no credentials provided)")
+    
+    if config.tenant_id:
+        print(f"  Static Tenant ID: {config.tenant_id}")
+    else:
+        print("  Static Tenant ID: None")
+    
+    print("\nMulti-tenant Support:")
+    print("  - Send X-Scope-OrgId header with requests for multi-tenant setups")
+    print("  - Request header takes precedence over static ALERTMANAGER_TENANT config")
 
     return True
 
@@ -453,18 +574,27 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         Args:
             request: The incoming HTTP request
         """
-        # Connect the SSE transport to the request
-        async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
-            # Run the MCP server with the SSE streams
-            await mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp_server.create_initialization_options(),
-            )
+        # Extract X-Scope-OrgId header if present and set in ContextVar
+        scope_org_id = extract_header_from_request(request, "x-scope-orgid")
+        token = _current_scope_org_id.set(scope_org_id) if scope_org_id else None
+        
+        try:
+            # Connect the SSE transport to the request
+            async with sse.connect_sse(
+                    request.scope,
+                    request.receive,
+                    request._send,  # noqa: SLF001
+            ) as (read_stream, write_stream):
+                # Run the MCP server with the SSE streams
+                await mcp_server.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server.create_initialization_options(),
+                )
+        finally:
+            # Reset ContextVar to restore previous value
+            if token is not None:
+                _current_scope_org_id.reset(token)
 
     # Create and return the Starlette application with routes
     return Starlette(
@@ -486,9 +616,27 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
     at the '/mcp' path for GET/POST/DELETE requests.
     """
     transport = StreamableHTTPServerTransport(None)
+    
+    async def handle_mcp_request(scope, receive, send):
+        """Wrapper to extract X-Scope-OrgId header before handling MCP request."""
+        token = None
+        
+        if scope['type'] == 'http':
+            # Extract X-Scope-OrgId from headers
+            scope_org_id = extract_header_from_scope(scope, "x-scope-orgid")
+            if scope_org_id:
+                token = _current_scope_org_id.set(scope_org_id)
+        
+        try:
+            # Pass to the actual transport handler
+            await transport.handle_request(scope, receive, send)
+        finally:
+            # Reset ContextVar to restore previous value
+            if token is not None:
+                _current_scope_org_id.reset(token)
 
     routes = [
-        Mount("/mcp", app=transport.handle_request),
+        Mount("/mcp", app=handle_mcp_request),
     ]
 
     app = Starlette(debug=debug, routes=routes)
