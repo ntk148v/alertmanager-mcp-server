@@ -1,6 +1,7 @@
 """Tests for the Prometheus Alertmanager MCP server functionality."""
 
 import importlib
+import os
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, MagicMock
@@ -252,30 +253,29 @@ async def test_get_alert_groups_tool(mock_make_request):
                                       "active": False, "silenced": True, "inhibited": True})
 
 
-def test_setup_environment_with_basic_auth(monkeypatch):
-    monkeypatch.setenv("ALERTMANAGER_URL", "http://localhost:9093")
-    monkeypatch.setenv("ALERTMANAGER_USERNAME", "user")
-    monkeypatch.setenv("ALERTMANAGER_PASSWORD", "pass")
+def test_setup_environment_with_basic_auth():
+    os.environ["ALERTMANAGER_URL"] = "http://localhost:9093"
+    os.environ["ALERTMANAGER_USERNAME"] = "user"
+    os.environ["ALERTMANAGER_PASSWORD"] = "pass"
     importlib.reload(server)
-    with patch("builtins.print") as mock_print:
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print:
         assert server.setup_environment() is True
-        output = " ".join(str(call) for call in mock_print.call_args_list)
-        assert "Authentication: Using basic auth" in output
+        mock_print.assert_any_call("  Authentication: Using basic auth")
 
 
-def test_setup_environment_without_basic_auth(monkeypatch):
-    monkeypatch.setenv("ALERTMANAGER_URL", "http://localhost:9093")
-    monkeypatch.delenv("ALERTMANAGER_USERNAME", raising=False)
-    monkeypatch.delenv("ALERTMANAGER_PASSWORD", raising=False)
+def test_setup_environment_without_basic_auth():
+    os.environ["ALERTMANAGER_URL"] = "http://localhost:9093"
+    os.environ.pop("ALERTMANAGER_USERNAME", None)
+    os.environ.pop("ALERTMANAGER_PASSWORD", None)
     importlib.reload(server)
-    with patch("builtins.print") as mock_print:
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print:
         assert server.setup_environment() is True
-        output = " ".join(str(call) for call in mock_print.call_args_list)
-        assert "Authentication: None (no credentials provided)" in output
+        mock_print.assert_any_call(
+            "  Authentication: None (no credentials provided)")
 
 
-def test_setup_environment_no_url(monkeypatch):
-    monkeypatch.delenv("ALERTMANAGER_URL", raising=False)
+def test_setup_environment_no_url():
+    os.environ.pop("ALERTMANAGER_URL", None)
     # Reload config
     importlib.reload(server)
     assert server.setup_environment() is False
@@ -586,10 +586,9 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)
 @patch("alertmanager_mcp_server.server.mcp")
 def test_run_server_success(mock_mcp, mock_setup_env):
-    with patch("builtins.print") as mock_print, \
-         patch("sys.argv", ["server.py"]):
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print, \
+            patch("sys.argv", ["server.py"]):
         server.run_server()
         mock_setup_env.assert_called_once()
         mock_mcp.run.assert_called_once_with(transport="stdio")
-        assert any("Starting Prometheus Alertmanager MCP Server" in str(call)
-                   for call in mock_print.call_args_list)
+        mock_print.assert_any_call("\nStarting Prometheus Alertmanager MCP Server...")

@@ -5,7 +5,7 @@ description = "MCP Server for Prometheus Alertmanager integration"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp[cli]>=1.8.1",
+    "mcp[cli]==1.23.1",
     "requests>=2.32.3",
 ]
 

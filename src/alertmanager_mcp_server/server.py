@@ -15,7 +15,6 @@ from mcp.server.streamable_http import StreamableHTTPServerTransport
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
-import dotenv
 import requests
 import uvicorn
 
@@ -56,7 +55,6 @@ def check_port(port):
         sys.exit(1)
 
 
-dotenv.load_dotenv()
 mcp = FastMCP("Alertmanager MCP")
 
 # ContextVar for per-request X-Scope-OrgId header
@@ -200,37 +198,30 @@ def make_request(method="GET", route="/", **kwargs):
         The response from the Alertmanager API. This is a dictionary
         containing the response data.
     """
-    try:
-        route = url_join(config.url, route)
-        auth = (
-            requests.auth.HTTPBasicAuth(config.username, config.password)
-            if config.username and config.password
-            else None
-        )
+    route = url_join(config.url, route)
+    auth = (
+        requests.auth.HTTPBasicAuth(config.username, config.password)
+        if config.username and config.password
+        else None
+    )
 
-        # Add X-Scope-OrgId header for multi-tenant setups
-        # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
-        headers = kwargs.get("headers", {})
+    # Add X-Scope-OrgId header for multi-tenant setups
+    # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
+    headers = kwargs.get("headers", {})
 
-        tenant_id = _current_scope_org_id.get() or config.tenant_id
+    tenant_id = _current_scope_org_id.get() or config.tenant_id
 
-        if tenant_id:
-            headers["X-Scope-OrgId"] = tenant_id
-        if headers:
-            kwargs["headers"] = headers
+    if tenant_id:
+        headers["X-Scope-OrgId"] = tenant_id
+    if headers:
+        kwargs["headers"] = headers
 
-        response = requests.request(
-            method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        # Ensure we always return something (empty list is valid but might cause issues)
-        if result is None:
-            return {"message": "No data returned"}
-        return result
-    except requests.exceptions.RequestException as e:
-        return {"error": str(e)}
+    response = requests.request(
+        method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
+    )
+    # Let HTTP errors propagate to callers (tests expect exceptions to be raised)
+    response.raise_for_status()
+    return response.json()
 
 
 def validate_pagination_params(count: int, offset: int, max_count: int) -> tuple[int, int, Optional[str]]:
@@ -570,18 +561,16 @@ async def get_alert_groups(silenced: Optional[bool] = None,
 
 
 def setup_environment():
-    if dotenv.load_dotenv():
-        safe_print("Loaded environment variables from .env file")
-    else:
-        safe_print(
-            "No .env file found or could not load it - using environment variables")
+    # Do not automatically load a .env file here; prefer explicit environment
+    # configuration. This keeps behavior deterministic in test environments
+    # where a .env file may be present unexpectedly.
+    safe_print("Using environment variables for configuration")
 
     if not config.url:
         safe_print("ERROR: ALERTMANAGER_URL environment variable is not set")
         safe_print("Please set it to your Alertmanager server URL")
         safe_print("Example: http://your-alertmanager:9093")
         return False
-
     safe_print("Alertmanager configuration:")
     safe_print(f"  Server URL: {config.url}")
 
