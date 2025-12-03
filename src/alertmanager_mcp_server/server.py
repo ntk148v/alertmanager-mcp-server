@@ -2,6 +2,7 @@
 import os
 import logging
 import socket
+import signal
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -24,6 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def handle_interrupt(signum, frame):
+    """Handle keyboard interrupt (Ctrl+C) gracefully."""
+    logger.info(f"Received signal {signum}, shutting down gracefully...")
+    sys.exit(0)
 
 def safe_print(text):
     # Don't print to stderr when running as MCP server via uvx to avoid JSON parsing errors
@@ -731,6 +736,9 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
 def run_server():
     """Main entry point for the Prometheus Alertmanager MCP Server"""
     setup_environment()
+    # Set up signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, handle_interrupt)
+    signal.signal(signal.SIGTERM, handle_interrupt)
     # Get the underlying MCP server from the FastMCP instance
     mcp_server = mcp._mcp_server  # noqa: WPS437
 
