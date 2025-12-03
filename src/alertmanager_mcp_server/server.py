@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import os
 import logging
+import socket
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -36,6 +37,18 @@ def safe_print(text):
         print(text, file=sys.stderr)
     except UnicodeEncodeError:
         print(text.encode('ascii', errors='replace').decode(), file=sys.stderr)
+
+
+def check_port(port):
+    # Check port availability before starting HTTP server
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', port))
+    except OSError as e:
+        safe_print(f"Socket error: {e}")
+        safe_print(
+            f"Port {port} is already in use. Cannot start HTTP server.")
+        sys.exit(1)
 
 
 dotenv.load_dotenv()
@@ -756,6 +769,9 @@ def run_server():
 
     # Launch the server with the selected transport mode
     if args.transport == 'sse':
+        # Check port availability before starting HTTP server
+        check_port(args.port)
+
         safe_print("Running server with SSE transport (web-based)")
         # Run with SSE transport (web-based)
         # Create a Starlette app to serve the MCP server
@@ -763,6 +779,9 @@ def run_server():
         # Start the web server with the configured host and port
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     elif args.transport == 'http':
+        # Check port availability before starting HTTP server
+        check_port(args.port)
+
         safe_print("Running server with http transport (streamable HTTP)")
         # Run with streamable-http transport served by uvicorn so host/port
         # CLI/env variables control the listening socket (same pattern as SSE).
