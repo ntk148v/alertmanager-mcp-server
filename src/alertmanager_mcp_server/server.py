@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 import os
+import logging
+import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
@@ -15,25 +17,47 @@ import dotenv
 import requests
 import uvicorn
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+def safe_print(text):
+    # Don't print to stderr when running as MCP server via uvx to avoid JSON parsing errors
+    # Check if we're running as MCP server (no TTY and uvx in process name)
+    if not sys.stderr.isatty():
+        # Running as MCP server, suppress output to avoid JSON parsing errors
+        logger.debug(f"[MCP Server] {text}")
+        return
+
+    try:
+        print(text, file=sys.stderr)
+    except UnicodeEncodeError:
+        print(text.encode('ascii', errors='replace').decode(), file=sys.stderr)
+
+
 dotenv.load_dotenv()
 mcp = FastMCP("Alertmanager MCP")
 
 # ContextVar for per-request X-Scope-OrgId header
 # Used for multi-tenant Alertmanager setups (e.g., Mimir)
 # ContextVar ensures proper isolation per async context/task
-_current_scope_org_id: ContextVar[Optional[str]] = ContextVar("current_scope_org_id", default=None)
+_current_scope_org_id: ContextVar[Optional[str]] = ContextVar(
+    "current_scope_org_id", default=None)
 
 
 def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
     """Extract a header value from an ASGI scope.
-    
+
     Parameters
     ----------
     scope : dict
         ASGI scope dictionary containing headers
     header_name : str
         Header name to extract (should be lowercase, e.g. "x-scope-orgid")
-        
+
     Returns
     -------
     Optional[str]
@@ -52,14 +76,14 @@ def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
 
 def extract_header_from_request(request: Request, header_name: str) -> Optional[str]:
     """Extract a header value from a Starlette Request.
-    
+
     Parameters
     ----------
     request : Request
         Starlette request object
     header_name : str
         Header name to extract (case-insensitive)
-        
+
     Returns
     -------
     Optional[str]
@@ -86,39 +110,43 @@ config = AlertmanagerConfig(
 )
 
 # Pagination defaults and limits (configurable via environment variables)
-DEFAULT_SILENCE_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_SILENCE_PAGE", "10"))
+DEFAULT_SILENCE_PAGE = int(os.environ.get(
+    "ALERTMANAGER_DEFAULT_SILENCE_PAGE", "10"))
 MAX_SILENCE_PAGE = int(os.environ.get("ALERTMANAGER_MAX_SILENCE_PAGE", "50"))
-DEFAULT_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_PAGE", "10"))
+DEFAULT_ALERT_PAGE = int(os.environ.get(
+    "ALERTMANAGER_DEFAULT_ALERT_PAGE", "10"))
 MAX_ALERT_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_PAGE", "25"))
-DEFAULT_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_DEFAULT_ALERT_GROUP_PAGE", "3"))
-MAX_ALERT_GROUP_PAGE = int(os.environ.get("ALERTMANAGER_MAX_ALERT_GROUP_PAGE", "5"))
+DEFAULT_ALERT_GROUP_PAGE = int(os.environ.get(
+    "ALERTMANAGER_DEFAULT_ALERT_GROUP_PAGE", "3"))
+MAX_ALERT_GROUP_PAGE = int(os.environ.get(
+    "ALERTMANAGER_MAX_ALERT_GROUP_PAGE", "5"))
 
 
 def url_join(base: str, path: str) -> str:
     """Join a base URL with a path, preserving the base URL's path component.
-    
+
     Unlike urllib.parse.urljoin, this function preserves the path in the base URL
     when the path argument starts with '/'. This is useful for APIs hosted at
     subpaths (e.g., http://localhost:8080/alertmanager).
-    
+
     Examples
     --------
     >>> url_join("http://localhost:8080/alertmanager", "/api/v2/alerts")
     'http://localhost:8080/alertmanager/api/v2/alerts'
-    
+
     >>> url_join("http://localhost:8080/alertmanager/", "/api/v2/alerts")
     'http://localhost:8080/alertmanager/api/v2/alerts'
-    
+
     >>> url_join("http://localhost:8080", "/api/v2/alerts")
     'http://localhost:8080/api/v2/alerts'
-    
+
     Parameters
     ----------
     base : str
         The base URL which may include a path component
     path : str
         The path to append, which may or may not start with '/'
-        
+
     Returns
     -------
     str
@@ -126,10 +154,10 @@ def url_join(base: str, path: str) -> str:
     """
     # Remove trailing slash from base if present
     base = base.rstrip('/')
-    
+
     # Remove leading slash from path if present
     path = path.lstrip('/')
-    
+
     # Combine with a single slash
     return f"{base}/{path}"
 
@@ -161,24 +189,24 @@ def make_request(method="GET", route="/", **kwargs):
             if config.username and config.password
             else None
         )
-        
+
         # Add X-Scope-OrgId header for multi-tenant setups
         # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
         headers = kwargs.get("headers", {})
-        
+
         tenant_id = _current_scope_org_id.get() or config.tenant_id
-        
+
         if tenant_id:
             headers["X-Scope-OrgId"] = tenant_id
         if headers:
             kwargs["headers"] = headers
-        
+
         response = requests.request(
             method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
         )
         response.raise_for_status()
         result = response.json()
-        
+
         # Ensure we always return something (empty list is valid but might cause issues)
         if result is None:
             return {"message": "No data returned"}
@@ -311,7 +339,8 @@ async def get_silences(filter: Optional[str] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate pagination parameters
-    count, offset, error = validate_pagination_params(count, offset, MAX_SILENCE_PAGE)
+    count, offset, error = validate_pagination_params(
+        count, offset, MAX_SILENCE_PAGE)
     if error:
         return {"error": error}
 
@@ -320,7 +349,8 @@ async def get_silences(filter: Optional[str] = None,
         params = {"filter": filter}
 
     # Get all silences from the API
-    all_silences = make_request(method="GET", route="/api/v2/silences", params=params)
+    all_silences = make_request(
+        method="GET", route="/api/v2/silences", params=params)
 
     # Apply pagination and return results
     return paginate_results(all_silences, count, offset)
@@ -420,7 +450,8 @@ async def get_alerts(filter: Optional[str] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate pagination parameters
-    count, offset, error = validate_pagination_params(count, offset, MAX_ALERT_PAGE)
+    count, offset, error = validate_pagination_params(
+        count, offset, MAX_ALERT_PAGE)
     if error:
         return {"error": error}
 
@@ -435,7 +466,8 @@ async def get_alerts(filter: Optional[str] = None,
         params["active"] = active
 
     # Get all alerts from the API
-    all_alerts = make_request(method="GET", route="/api/v2/alerts", params=params)
+    all_alerts = make_request(
+        method="GET", route="/api/v2/alerts", params=params)
 
     # Apply pagination and return results
     return paginate_results(all_alerts, count, offset)
@@ -498,7 +530,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
           Use the 'has_more' flag to determine if additional pages are available.
     """
     # Validate pagination parameters
-    count, offset, error = validate_pagination_params(count, offset, MAX_ALERT_GROUP_PAGE)
+    count, offset, error = validate_pagination_params(
+        count, offset, MAX_ALERT_GROUP_PAGE)
     if error:
         return {"error": error}
 
@@ -520,32 +553,35 @@ async def get_alert_groups(silenced: Optional[bool] = None,
 
 def setup_environment():
     if dotenv.load_dotenv():
-        print("Loaded environment variables from .env file")
+        safe_print("Loaded environment variables from .env file")
     else:
-        print("No .env file found or could not load it - using environment variables")
+        safe_print(
+            "No .env file found or could not load it - using environment variables")
 
     if not config.url:
-        print("ERROR: ALERTMANAGER_URL environment variable is not set")
-        print("Please set it to your Alertmanager server URL")
-        print("Example: http://your-alertmanager:9093")
+        safe_print("ERROR: ALERTMANAGER_URL environment variable is not set")
+        safe_print("Please set it to your Alertmanager server URL")
+        safe_print("Example: http://your-alertmanager:9093")
         return False
 
-    print("Alertmanager configuration:")
-    print(f"  Server URL: {config.url}")
+    safe_print("Alertmanager configuration:")
+    safe_print(f"  Server URL: {config.url}")
 
     if config.username and config.password:
-        print("  Authentication: Using basic auth")
+        safe_print("  Authentication: Using basic auth")
     else:
-        print("  Authentication: None (no credentials provided)")
-    
+        safe_print("  Authentication: None (no credentials provided)")
+
     if config.tenant_id:
-        print(f"  Static Tenant ID: {config.tenant_id}")
+        safe_print(f"  Static Tenant ID: {config.tenant_id}")
     else:
-        print("  Static Tenant ID: None")
-    
-    print("\nMulti-tenant Support:")
-    print("  - Send X-Scope-OrgId header with requests for multi-tenant setups")
-    print("  - Request header takes precedence over static ALERTMANAGER_TENANT config")
+        safe_print("  Static Tenant ID: None")
+
+    safe_print("\nMulti-tenant Support:")
+    safe_print(
+        "  - Send X-Scope-OrgId header with requests for multi-tenant setups")
+    safe_print(
+        "  - Request header takes precedence over static ALERTMANAGER_TENANT config")
 
     return True
 
@@ -576,8 +612,9 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         """
         # Extract X-Scope-OrgId header if present and set in ContextVar
         scope_org_id = extract_header_from_request(request, "x-scope-orgid")
-        token = _current_scope_org_id.set(scope_org_id) if scope_org_id else None
-        
+        token = _current_scope_org_id.set(
+            scope_org_id) if scope_org_id else None
+
         try:
             # Connect the SSE transport to the request
             async with sse.connect_sse(
@@ -616,17 +653,17 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
     at the '/mcp' path for GET/POST/DELETE requests.
     """
     transport = StreamableHTTPServerTransport(None)
-    
+
     async def handle_mcp_request(scope, receive, send):
         """Wrapper to extract X-Scope-OrgId header before handling MCP request."""
         token = None
-        
+
         if scope['type'] == 'http':
             # Extract X-Scope-OrgId from headers
             scope_org_id = extract_header_from_scope(scope, "x-scope-orgid")
             if scope_org_id:
                 token = _current_scope_org_id.set(scope_org_id)
-        
+
         try:
             # Pass to the actual transport handler
             await transport.handle_request(scope, receive, send)
@@ -701,7 +738,8 @@ def run_server():
     try:
         port_default = int(env_port) if env_port is not None else 8000
     except (TypeError, ValueError):
-        print(f"Invalid MCP_PORT value '{env_port}', falling back to 8000")
+        safe_print(
+            f"Invalid MCP_PORT value '{env_port}', falling back to 8000")
         port_default = 8000
 
     # Allow choosing between stdio and SSE transport modes
@@ -714,24 +752,24 @@ def run_server():
     parser.add_argument('--port', type=int, default=port_default,
                         help='Port to listen on (for SSE mode) — can also be set via $MCP_PORT')
     args = parser.parse_args()
-    print("\nStarting Prometheus Alertmanager MCP Server...")
+    safe_print("\nStarting Prometheus Alertmanager MCP Server...")
 
     # Launch the server with the selected transport mode
     if args.transport == 'sse':
-        print("Running server with SSE transport (web-based)")
+        safe_print("Running server with SSE transport (web-based)")
         # Run with SSE transport (web-based)
         # Create a Starlette app to serve the MCP server
         starlette_app = create_starlette_app(mcp_server, debug=True)
         # Start the web server with the configured host and port
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     elif args.transport == 'http':
-        print("Running server with http transport (streamable HTTP)")
+        safe_print("Running server with http transport (streamable HTTP)")
         # Run with streamable-http transport served by uvicorn so host/port
         # CLI/env variables control the listening socket (same pattern as SSE).
         starlette_app = create_streamable_app(mcp_server, debug=True)
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     else:
-        print("Running server with stdio transport (default)")
+        safe_print("Running server with stdio transport (default)")
         # Run with stdio transport (default)
         # This mode communicates through standard input/output
         mcp.run(transport='stdio')
