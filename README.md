@@ -10,6 +10,7 @@
 </div>
 
 ## Table of Contents
+
 - [Table of Contents](#table-of-contents)
 - [1. Introduction](#1-introduction)
 - [2. Features](#2-features)
@@ -104,6 +105,7 @@ python3 -m src.alertmanager_mcp_server.server --transport http --host 127.0.0.1 
 ```
 
 Notes:
+
 - The `stdio` transport communicates over standard input/output and ignores host/port.
 - The `http` (streamable HTTP) and `sse` transports are served via an ASGI app (uvicorn) so host/port are respected when using those transports.
 
@@ -170,9 +172,12 @@ $ docker run -e ALERTMANAGER_URL=http://your-alertmanager:9093 \
         "run",
         "--rm",
         "-i",
-        "-e", "ALERTMANAGER_URL",
-        "-e", "ALERTMANAGER_USERNAME",
-        "-e", "ALERTMANAGER_PASSWORD",
+        "-e",
+        "ALERTMANAGER_URL",
+        "-e",
+        "ALERTMANAGER_USERNAME",
+        "-e",
+        "ALERTMANAGER_PASSWORD",
         "ghcr.io/ntk148v/alertmanager-mcp-server:latest"
       ],
       "env": {
@@ -215,6 +220,7 @@ The MCP server exposes tools for querying and managing Alertmanager, following [
 ### Pagination Benefits
 
 When working with environments that have many alerts, silences, or alert groups, the pagination feature helps:
+
 - **Prevent context overflow**: By default, only 10 items are returned per request
 - **Efficient browsing**: LLMs can iterate through results using `offset` and `count` parameters
 - **Smart limits**: Maximum of 50 items per page prevents excessive context usage
@@ -238,8 +244,7 @@ $ make setup
 # Run test
 $ make test
 # Run in development mode
-$ mcp dev
-$ TRANSPORT_MODE=sse mcp dev
+$ mcp dev src/alertmanager_mcp_server/server.py
 
 # Install in Claude Desktop
 $ make install
