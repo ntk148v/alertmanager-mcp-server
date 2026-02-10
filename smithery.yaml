@@ -1,4 +1,9 @@
 # Smithery configuration file: https://smithery.ai/docs/build/project-config
+name: alertmanager-mcp-server
+description: MCP Server for Prometheus Alertmanager integration
+version: 1.1.0
+minVersion: 1.0.0
+license: Apache-2.0
 
 startCommand:
   type: stdio
