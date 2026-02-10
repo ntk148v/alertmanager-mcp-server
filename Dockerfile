@@ -27,7 +27,7 @@ CMD ["/app/.venv/bin/alertmanager-mcp-server"]
 
 LABEL org.opencontainers.image.title="Prometheus Alertmanager MCP Server" \
     org.opencontainers.image.description="Model Context Protocol server for Alertmanager integration" \
-    org.opencontainers.image.version="0.0.1" \
+    org.opencontainers.image.version="1.1.0" \
     org.opencontainers.image.authors="Kien Nguyen Tuan" \
     org.opencontainers.image.source="https://github.com/ntk148v/alertmanager-mcp-server" \
     org.opencontainers.image.licenses="Apache 2" \
