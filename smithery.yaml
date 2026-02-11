@@ -1,5 +1,7 @@
 # Smithery configuration file: https://smithery.ai/docs/build/project-config
 
+dockerfile: Dockerfile
+
 startCommand:
   type: stdio
   configSchema:
