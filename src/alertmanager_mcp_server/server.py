@@ -429,7 +429,7 @@ async def delete_silence(silence_id: str):
         The response from the Alertmanager API.
     """
     return make_request(
-        method="DELETE", route=url_join("/api/v2/silences/", silence_id)
+        method="DELETE", route=url_join("/api/v2/silence/", silence_id)
     )
 
 
