@@ -3,6 +3,8 @@ FROM python:3.12-slim-bookworm AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 COPY pyproject.toml uv.lock ./
 COPY src ./src/
 RUN uv venv && uv pip install --no-cache-dir -e .
@@ -27,7 +29,7 @@ CMD ["/app/.venv/bin/alertmanager-mcp-server"]
 
 LABEL org.opencontainers.image.title="Prometheus Alertmanager MCP Server" \
     org.opencontainers.image.description="Model Context Protocol server for Alertmanager integration" \
-    org.opencontainers.image.version="1.1.0" \
+    org.opencontainers.image.version="${SETUPTOOLS_SCM_PRETEND_VERSION}" \
     org.opencontainers.image.authors="Kien Nguyen Tuan" \
     org.opencontainers.image.source="https://github.com/ntk148v/alertmanager-mcp-server" \
     org.opencontainers.image.licenses="Apache 2" \
