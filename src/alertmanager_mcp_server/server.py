@@ -411,7 +411,7 @@ async def get_silence(silence_id: str):
     dict:
         The Silence object from Alertmanager instance.
     """
-    return make_request(method="GET", route=url_join("/api/v2/silences/", silence_id))
+    return make_request(method="GET", route=url_join("/api/v2/silence/", silence_id))
 
 
 @mcp.tool(description="Delete a silence by its ID")
@@ -429,7 +429,7 @@ async def delete_silence(silence_id: str):
         The response from the Alertmanager API.
     """
     return make_request(
-        method="DELETE", route=url_join("/api/v2/silences/", silence_id)
+        method="DELETE", route=url_join("/api/v2/silence/", silence_id)
     )
 
 
