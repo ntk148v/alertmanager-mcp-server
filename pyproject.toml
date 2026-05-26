@@ -1,6 +1,6 @@
 [project]
 name = "alertmanager_mcp_server"
-version = "1.1.0"
+dynamic = ["version"]
 description = "MCP Server for Prometheus Alertmanager integration"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,8 +17,10 @@ packages = ["alertmanager_mcp_server"]
 package-dir = { "" = "src" }
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
 
 [dependency-groups]
 dev = [
