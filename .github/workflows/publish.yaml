@@ -82,6 +82,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
           gh release create
           "$GITHUB_REF_NAME"
           --repo "$GITHUB_REPOSITORY"
@@ -93,3 +94,4 @@ jobs:
           gh release upload
           "$GITHUB_REF_NAME" dist/**
           --repo "$GITHUB_REPOSITORY"
+          --clobber
