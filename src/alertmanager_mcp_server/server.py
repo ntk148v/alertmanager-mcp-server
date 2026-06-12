@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import asyncio
+import json
 import os
 import logging
 import socket
@@ -13,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http import StreamableHTTPServerTransport
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 import dotenv
@@ -64,6 +67,7 @@ mcp = FastMCP("Alertmanager MCP")
 # ContextVar ensures proper isolation per async context/task
 _current_scope_org_id: ContextVar[Optional[str]] = ContextVar(
     "current_scope_org_id", default=None)
+SCOPE_ORG_ID_META_KEY = "alertmanagerScopeOrgId"
 
 
 def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
@@ -108,6 +112,88 @@ def extract_header_from_request(request: Request, header_name: str) -> Optional[
         The header value if found, None otherwise
     """
     return request.headers.get(header_name)
+
+
+def get_mcp_request_scope_org_id() -> Optional[str]:
+    """Return tenant metadata attached to the active MCP request, if any."""
+    try:
+        request_context = mcp._mcp_server.request_context  # noqa: WPS437
+    except LookupError:
+        return None
+
+    meta = request_context.meta
+    if meta is None:
+        return None
+
+    value = getattr(meta, SCOPE_ORG_ID_META_KEY, None)
+    if value is None:
+        value = getattr(meta, "model_extra", {}).get(SCOPE_ORG_ID_META_KEY)
+
+    return value if isinstance(value, str) and value else None
+
+
+def inject_scope_org_id_into_jsonrpc_body(body: bytes, scope_org_id: str) -> bytes:
+    """Attach request tenant metadata to a JSON-RPC request body."""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+
+    if not isinstance(payload, dict):
+        return body
+
+    params = payload.get("params")
+    if params is None:
+        params = {}
+        payload["params"] = params
+    if not isinstance(params, dict):
+        return body
+
+    meta = params.get("_meta")
+    if meta is None:
+        meta = {}
+        params["_meta"] = meta
+    if not isinstance(meta, dict):
+        return body
+
+    meta[SCOPE_ORG_ID_META_KEY] = scope_org_id
+    return json.dumps(payload).encode("utf-8")
+
+
+async def receive_with_scope_org_id_metadata(receive, scope_org_id: str):
+    """Read a request body once and return a receive callable with tenant metadata."""
+    body_parts = []
+
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            message_sent = False
+
+            async def receive_with_early_message():
+                nonlocal message_sent
+                if not message_sent:
+                    message_sent = True
+                    return message
+                return await receive()
+
+            return receive_with_early_message
+
+        body_parts.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            break
+
+    body = b"".join(body_parts)
+    body = inject_scope_org_id_into_jsonrpc_body(body, scope_org_id)
+    body_sent = False
+
+    async def receive_with_modified_body():
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+
+    return receive_with_modified_body
 
 
 @dataclass
@@ -208,11 +294,16 @@ def make_request(method="GET", route="/", **kwargs):
             else None
         )
 
-        # Add X-Scope-OrgId header for multi-tenant setups
-        # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
-        headers = kwargs.get("headers", {})
+        # Add X-Scope-OrgId header for multi-tenant setups.
+        # Priority: 1) current request context, 2) MCP request metadata,
+        # 3) static config tenant.
+        headers = dict(kwargs.get("headers", {}))
 
-        tenant_id = _current_scope_org_id.get() or config.tenant_id
+        tenant_id = (
+            _current_scope_org_id.get()
+            or get_mcp_request_scope_org_id()
+            or config.tenant_id
+        )
 
         if tenant_id:
             headers["X-Scope-OrgId"] = tenant_id
@@ -231,6 +322,12 @@ def make_request(method="GET", route="/", **kwargs):
         return result
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
+
+
+async def make_request_async(method="GET", route="/", **kwargs):
+    """Run the blocking Alertmanager HTTP request outside the event loop."""
+    return await asyncio.to_thread(
+        make_request, method=method, route=route, **kwargs)
 
 
 def validate_pagination_params(count: int, offset: int, max_count: int) -> tuple[int, int, Optional[str]]:
@@ -270,7 +367,7 @@ def validate_pagination_params(count: int, offset: int, max_count: int) -> tuple
     return count, offset, error
 
 
-def paginate_results(items: List[Any], count: int, offset: int) -> Dict[str, Any]:
+def paginate_results(items: Any, count: int, offset: int) -> Dict[str, Any]:
     """Apply pagination to a list of items and generate pagination metadata.
 
     Parameters
@@ -289,6 +386,17 @@ def paginate_results(items: List[Any], count: int, offset: int) -> Dict[str, Any
         - data: List of items for the current page
         - pagination: Metadata including total, offset, count, requested_count, and has_more
     """
+    if isinstance(items, dict) and "error" in items:
+        return items
+
+    if not isinstance(items, list):
+        return {
+            "error": (
+                "Expected list response from Alertmanager before pagination, "
+                f"got {type(items).__name__}."
+            )
+        }
+
     total = len(items)
     end_index = offset + count
     paginated_items = items[offset:end_index]
@@ -316,7 +424,7 @@ async def get_status():
         The response from the Alertmanager API. This is a dictionary
         containing the response data.
     """
-    return make_request(method="GET", route="/api/v2/status")
+    return await make_request_async(method="GET", route="/api/v2/status")
 
 
 @mcp.tool(description="Get list of all receivers (name of notification integrations)")
@@ -328,7 +436,7 @@ async def get_receivers():
     list:
         Return a list of Receiver objects from Alertmanager instance.
     """
-    return make_request(method="GET", route="/api/v2/receivers")
+    return await make_request_async(method="GET", route="/api/v2/receivers")
 
 
 @mcp.tool(description="Get list of all silences")
@@ -367,7 +475,7 @@ async def get_silences(filter: Optional[str] = None,
         params = {"filter": filter}
 
     # Get all silences from the API
-    all_silences = make_request(
+    all_silences = await make_request_async(
         method="GET", route="/api/v2/silences", params=params)
 
     # Apply pagination and return results
@@ -394,7 +502,8 @@ async def post_silence(silence: Dict[str, Any]):
     dict:
         Create / update silence response from Alertmanager API.
     """
-    return make_request(method="POST", route="/api/v2/silences", json=silence)
+    return await make_request_async(
+        method="POST", route="/api/v2/silences", json=silence)
 
 
 @mcp.tool(description="Get a silence by its ID")
@@ -411,7 +520,8 @@ async def get_silence(silence_id: str):
     dict:
         The Silence object from Alertmanager instance.
     """
-    return make_request(method="GET", route=url_join("/api/v2/silence/", silence_id))
+    return await make_request_async(
+        method="GET", route=url_join("/api/v2/silence/", silence_id))
 
 
 @mcp.tool(description="Delete a silence by its ID")
@@ -428,7 +538,7 @@ async def delete_silence(silence_id: str):
     dict:
         The response from the Alertmanager API.
     """
-    return make_request(
+    return await make_request_async(
         method="DELETE", route=url_join("/api/v2/silence/", silence_id)
     )
 
@@ -484,7 +594,7 @@ async def get_alerts(filter: Optional[str] = None,
         params["active"] = active
 
     # Get all alerts from the API
-    all_alerts = make_request(
+    all_alerts = await make_request_async(
         method="GET", route="/api/v2/alerts", params=params)
 
     # Apply pagination and return results
@@ -512,7 +622,8 @@ async def post_alerts(alerts: List[Dict]):
     dict:
         Create alert response from Alertmanager API.
     """
-    return make_request(method="POST", route="/api/v2/alerts", json=alerts)
+    return await make_request_async(
+        method="POST", route="/api/v2/alerts", json=alerts)
 
 
 @mcp.tool(description="Get a list of alert groups")
@@ -562,8 +673,8 @@ async def get_alert_groups(silenced: Optional[bool] = None,
         params["active"] = active
 
     # Get all alert groups from the API
-    all_groups = make_request(method="GET", route="/api/v2/alerts/groups",
-                              params=params)
+    all_groups = await make_request_async(method="GET", route="/api/v2/alerts/groups",
+                                          params=params)
 
     # Apply pagination and return results
     return paginate_results(all_groups, count, offset)
@@ -602,6 +713,10 @@ def setup_environment():
         "  - Request header takes precedence over static ALERTMANAGER_TENANT config")
 
     return True
+
+
+async def health_check(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
 
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
@@ -655,6 +770,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     return Starlette(
         debug=debug,
         routes=[
+            Route("/health", endpoint=health_check, methods=["GET"]),
             Route("/sse", endpoint=handle_sse),  # Endpoint for SSE connections
             # Endpoint for posting messages
             Mount("/messages/", app=sse.handle_post_message),
@@ -681,6 +797,9 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
             scope_org_id = extract_header_from_scope(scope, "x-scope-orgid")
             if scope_org_id:
                 token = _current_scope_org_id.set(scope_org_id)
+                if scope.get("method") == "POST":
+                    receive = await receive_with_scope_org_id_metadata(
+                        receive, scope_org_id)
 
         try:
             # Pass to the actual transport handler
@@ -691,6 +810,7 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
                 _current_scope_org_id.reset(token)
 
     routes = [
+        Route("/health", endpoint=health_check, methods=["GET"]),
         Mount("/mcp", app=handle_mcp_request),
     ]
 
@@ -717,6 +837,9 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
             task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:
+                # Task cancelled during normal shutdown.
+                pass
             except Exception:
                 # Task cancelled or errored during shutdown is fine
                 pass
@@ -735,7 +858,8 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
 
 def run_server():
     """Main entry point for the Prometheus Alertmanager MCP Server"""
-    setup_environment()
+    if not setup_environment():
+        sys.exit(1)
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, handle_interrupt)
     signal.signal(signal.SIGTERM, handle_interrupt)

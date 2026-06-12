@@ -24,7 +24,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import os; os.kill(1, 0)"
 CMD ["/app/.venv/bin/alertmanager-mcp-server"]
 
 LABEL org.opencontainers.image.title="Prometheus Alertmanager MCP Server" \

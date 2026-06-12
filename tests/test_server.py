@@ -1,9 +1,14 @@
 """Tests for the Prometheus Alertmanager MCP server functionality."""
 
+import asyncio
 import importlib
+import json
+from pathlib import Path
 import pytest
 import pytest_asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
+
+import requests
 
 import alertmanager_mcp_server.server as server
 
@@ -41,6 +46,19 @@ def test_make_request_http_error(mock_request):
 
 
 @patch("alertmanager_mcp_server.server.requests.request")
+def test_make_request_requests_http_error_returns_error_dict(mock_request):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        "503 Service Unavailable"
+    )
+    mock_request.return_value = mock_response
+
+    result = server.make_request(method="GET", route="/api/v2/status")
+
+    assert result == {"error": "503 Service Unavailable"}
+
+
+@patch("alertmanager_mcp_server.server.requests.request")
 def test_make_request_with_basic_auth(mock_request):
     # Save original config
     server.config.username = "user"
@@ -60,9 +78,65 @@ def test_make_request_with_basic_auth(mock_request):
     assert kwargs["auth"] is not None
 
 
+@patch("alertmanager_mcp_server.server.requests.request")
+def test_make_request_uses_mcp_request_scope_org_id_before_static_tenant(
+        mock_request, monkeypatch):
+    server.config.tenant_id = "static-tenant"
+    monkeypatch.setattr(
+        server, "get_mcp_request_scope_org_id", lambda: "request-tenant")
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"status": "success"}
+    mock_response.raise_for_status.return_value = None
+    mock_request.return_value = mock_response
+
+    server.make_request(method="GET", route="/api/v2/status")
+
+    _, kwargs = mock_request.call_args
+    assert kwargs["headers"]["X-Scope-OrgId"] == "request-tenant"
+
+
+def test_inject_scope_org_id_into_jsonrpc_body_adds_request_meta():
+    body = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_alerts", "arguments": {}},
+    }).encode("utf-8")
+
+    updated = server.inject_scope_org_id_into_jsonrpc_body(
+        body, "request-tenant")
+
+    payload = json.loads(updated)
+    assert payload["params"]["_meta"]["alertmanagerScopeOrgId"] == "request-tenant"
+
+
+@pytest.mark.asyncio
+async def test_tools_offload_blocking_requests_to_worker_thread(monkeypatch):
+    calls = []
+
+    async def fake_to_thread(func, *args, **kwargs):
+        calls.append((func, args, kwargs))
+        return {"status": "success"}
+
+    monkeypatch.setattr(server.asyncio, "to_thread", fake_to_thread)
+
+    result = await server.get_status()
+
+    assert result == {"status": "success"}
+    assert calls == [
+        (
+            server.make_request,
+            (),
+            {"method": "GET", "route": "/api/v2/status"},
+        )
+    ]
+
+
 @pytest_asyncio.fixture
 async def mock_make_request():
-    with patch("alertmanager_mcp_server.server.make_request") as mock:
+    with patch(
+            "alertmanager_mcp_server.server.make_request_async",
+            new_callable=AsyncMock) as mock:
         yield mock
 
 
@@ -252,12 +326,34 @@ async def test_get_alert_groups_tool(mock_make_request):
                                       "active": False, "silenced": True, "inhibited": True})
 
 
+@pytest.mark.asyncio
+async def test_paginated_tools_return_upstream_error(mock_make_request):
+    upstream_error = {"error": "Alertmanager unavailable"}
+    for tool in (server.get_silences, server.get_alerts, server.get_alert_groups):
+        mock_make_request.reset_mock()
+        mock_make_request.return_value = upstream_error
+
+        result = await tool()
+
+        assert result == upstream_error
+
+
+@pytest.mark.asyncio
+async def test_paginated_tools_reject_non_list_upstream_response(mock_make_request):
+    mock_make_request.return_value = {"status": "unexpected"}
+
+    result = await server.get_alerts()
+
+    assert "error" in result
+    assert "Expected list response" in result["error"]
+
+
 def test_setup_environment_with_basic_auth(monkeypatch):
     monkeypatch.setenv("ALERTMANAGER_URL", "http://localhost:9093")
     monkeypatch.setenv("ALERTMANAGER_USERNAME", "user")
     monkeypatch.setenv("ALERTMANAGER_PASSWORD", "pass")
     importlib.reload(server)
-    with patch("builtins.print") as mock_print:
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print:
         assert server.setup_environment() is True
         output = " ".join(str(call) for call in mock_print.call_args_list)
         assert "Authentication: Using basic auth" in output
@@ -268,7 +364,7 @@ def test_setup_environment_without_basic_auth(monkeypatch):
     monkeypatch.delenv("ALERTMANAGER_USERNAME", raising=False)
     monkeypatch.delenv("ALERTMANAGER_PASSWORD", raising=False)
     importlib.reload(server)
-    with patch("builtins.print") as mock_print:
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print:
         assert server.setup_environment() is True
         output = " ".join(str(call) for call in mock_print.call_args_list)
         assert "Authentication: None (no credentials provided)" in output
@@ -586,10 +682,63 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)
 @patch("alertmanager_mcp_server.server.mcp")
 def test_run_server_success(mock_mcp, mock_setup_env):
-    with patch("builtins.print") as mock_print, \
+    with patch("alertmanager_mcp_server.server.safe_print") as mock_print, \
          patch("sys.argv", ["server.py"]):
         server.run_server()
         mock_setup_env.assert_called_once()
         mock_mcp.run.assert_called_once_with(transport="stdio")
         assert any("Starting Prometheus Alertmanager MCP Server" in str(call)
                    for call in mock_print.call_args_list)
+
+
+@patch("alertmanager_mcp_server.server.setup_environment", return_value=False)
+@patch("alertmanager_mcp_server.server.mcp")
+def test_run_server_exits_when_environment_is_invalid(mock_mcp, mock_setup_env):
+    with patch("sys.argv", ["server.py"]), pytest.raises(SystemExit) as exc:
+        server.run_server()
+
+    assert exc.value.code == 1
+    mock_setup_env.assert_called_once()
+    mock_mcp.run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_shutdown_suppresses_task_cancellation():
+    app = server.create_streamable_app(MagicMock())
+
+    async def sleep_forever():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(sleep_forever())
+    app.state._mcp_task = task
+
+    await app.router.on_shutdown[0]()
+
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_health_check_returns_ok_response():
+    response = await server.health_check(MagicMock())
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"status": "ok"}
+
+
+def test_web_apps_include_health_route():
+    mcp_server = MagicMock()
+
+    sse_app = server.create_starlette_app(mcp_server)
+    streamable_app = server.create_streamable_app(mcp_server)
+
+    assert "/health" in [getattr(route, "path", None)
+                         for route in sse_app.routes]
+    assert "/health" in [getattr(route, "path", None)
+                         for route in streamable_app.routes]
+
+
+def test_docker_healthcheck_uses_python_process_liveness():
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "curl -f" not in dockerfile
+    assert "os.kill(1, 0)" in dockerfile
