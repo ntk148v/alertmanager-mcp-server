@@ -1,9 +1,11 @@
 """Tests for the Prometheus Alertmanager MCP server functionality."""
 
+import asyncio
+from contextlib import asynccontextmanager
 import importlib
 import pytest
 import pytest_asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import alertmanager_mcp_server.server as server
 
@@ -257,6 +259,7 @@ def test_setup_environment_with_basic_auth(monkeypatch):
     monkeypatch.setenv("ALERTMANAGER_USERNAME", "user")
     monkeypatch.setenv("ALERTMANAGER_PASSWORD", "pass")
     importlib.reload(server)
+    monkeypatch.setattr(server.sys.stderr, "isatty", lambda: True)
     with patch("builtins.print") as mock_print:
         assert server.setup_environment() is True
         output = " ".join(str(call) for call in mock_print.call_args_list)
@@ -268,6 +271,7 @@ def test_setup_environment_without_basic_auth(monkeypatch):
     monkeypatch.delenv("ALERTMANAGER_USERNAME", raising=False)
     monkeypatch.delenv("ALERTMANAGER_PASSWORD", raising=False)
     importlib.reload(server)
+    monkeypatch.setattr(server.sys.stderr, "isatty", lambda: True)
     with patch("builtins.print") as mock_print:
         assert server.setup_environment() is True
         output = " ".join(str(call) for call in mock_print.call_args_list)
@@ -583,9 +587,58 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
     assert result["pagination"]["total"] == 15
 
 
+@pytest.mark.asyncio
+async def test_streamable_app_lifespan_runs_mcp_server(monkeypatch):
+    class FakeTransport:
+        def __init__(self):
+            self.terminated = False
+
+        async def handle_request(self, scope, receive, send):
+            pass
+
+        @asynccontextmanager
+        async def connect(self):
+            yield object(), object()
+
+        async def terminate(self):
+            self.terminated = True
+
+    transport = FakeTransport()
+    mcp_server = MagicMock()
+    mcp_server.create_initialization_options.return_value = {
+        "capabilities": {}
+    }
+    run_started = asyncio.Event()
+    run_cancelled = asyncio.Event()
+
+    async def run_forever(*args):
+        run_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            run_cancelled.set()
+            raise
+
+    mcp_server.run = AsyncMock(side_effect=run_forever)
+    monkeypatch.setattr(
+        server,
+        "StreamableHTTPServerTransport",
+        lambda *args, **kwargs: transport,
+    )
+
+    app = server.create_streamable_app(mcp_server)
+
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(run_started.wait(), timeout=1)
+
+    assert run_cancelled.is_set()
+    assert transport.terminated is True
+
+
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)
 @patch("alertmanager_mcp_server.server.mcp")
-def test_run_server_success(mock_mcp, mock_setup_env):
+def test_run_server_success(mock_mcp, mock_setup_env, monkeypatch):
+    monkeypatch.setattr(server.sys.stderr, "isatty", lambda: True)
     with patch("builtins.print") as mock_print, \
          patch("sys.argv", ["server.py"]):
         server.run_server()

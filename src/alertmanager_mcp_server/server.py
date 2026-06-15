@@ -1,9 +1,11 @@
 #!/usr/bin/env python
+import asyncio
 import os
 import logging
 import socket
 import signal
 import sys
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
@@ -694,14 +696,11 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
         Mount("/mcp", app=handle_mcp_request),
     ]
 
-    app = Starlette(debug=debug, routes=routes)
-
-    async def _startup() -> None:
+    @asynccontextmanager
+    async def lifespan(app: Starlette):
         # Run the MCP server in a background asyncio task so the lifespan
         # event doesn't block. Store the task on app.state so shutdown can
         # cancel it.
-        import asyncio
-
         async def _run_mcp() -> None:
             # Create the transport-backed streams and run the MCP server
             async with transport.connect() as (read_stream, write_stream):
@@ -710,25 +709,20 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
                 )
 
         app.state._mcp_task = asyncio.create_task(_run_mcp())
-
-    async def _shutdown() -> None:
-        task = getattr(app.state, "_mcp_task", None)
-        if task:
-            task.cancel()
-            try:
-                await task
-            except Exception:
-                # Task cancelled or errored during shutdown is fine
-                pass
-
-        # Attempt to terminate the transport cleanly
         try:
-            await transport.terminate()
-        except Exception:
-            pass
+            yield
+        finally:
+            task = getattr(app.state, "_mcp_task", None)
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
 
-    app.add_event_handler("startup", _startup)
-    app.add_event_handler("shutdown", _shutdown)
+            # Attempt to terminate the transport cleanly
+            with suppress(Exception):
+                await transport.terminate()
+
+    app = Starlette(debug=debug, routes=routes, lifespan=lifespan)
 
     return app
 
