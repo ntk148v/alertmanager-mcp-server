@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 import asyncio
+import hmac
 import os
 import logging
 import socket
 import signal
 import sys
 from contextlib import asynccontextmanager, suppress
-from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
@@ -16,6 +16,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http import StreamableHTTPServerTransport
 from starlette.applications import Starlette
 from starlette.requests import Request
+from starlette.responses import Response
 from starlette.routing import Mount, Route
 import dotenv
 import requests
@@ -61,13 +62,6 @@ def check_port(port):
 dotenv.load_dotenv()
 mcp = FastMCP("Alertmanager MCP")
 
-# ContextVar for per-request X-Scope-OrgId header
-# Used for multi-tenant Alertmanager setups (e.g., Mimir)
-# ContextVar ensures proper isolation per async context/task
-_current_scope_org_id: ContextVar[Optional[str]] = ContextVar(
-    "current_scope_org_id", default=None)
-
-
 def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
     """Extract a header value from an ASGI scope.
 
@@ -76,7 +70,7 @@ def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
     scope : dict
         ASGI scope dictionary containing headers
     header_name : str
-        Header name to extract (should be lowercase, e.g. "x-scope-orgid")
+        Header name to extract (should be lowercase, e.g. "authorization")
 
     Returns
     -------
@@ -92,24 +86,6 @@ def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
             except Exception:
                 return None
     return None
-
-
-def extract_header_from_request(request: Request, header_name: str) -> Optional[str]:
-    """Extract a header value from a Starlette Request.
-
-    Parameters
-    ----------
-    request : Request
-        Starlette request object
-    header_name : str
-        Header name to extract (case-insensitive)
-
-    Returns
-    -------
-    Optional[str]
-        The header value if found, None otherwise
-    """
-    return request.headers.get(header_name)
 
 
 @dataclass
@@ -128,6 +104,42 @@ config = AlertmanagerConfig(
     password=os.environ.get("ALERTMANAGER_PASSWORD", ""),
     tenant_id=os.environ.get("ALERTMANAGER_TENANT", ""),
 )
+
+# Optional bearer/API-key protection for the HTTP/SSE web transports.
+# When set, every request must present `Authorization: Bearer <key>` or it is
+# rejected with 401. When unset, a warning is logged and the transports run
+# unauthenticated (the previous behaviour). stdio transport is unaffected.
+api_key = os.environ.get("MCP_API_KEY", "")
+
+
+def check_bearer_token(authorization: Optional[str]) -> bool:
+    """Return True when the Authorization header carries the configured key.
+
+    Only the `Bearer` scheme (case-insensitive) is accepted, and the token is
+    compared in constant time. When no key is configured, requests are allowed
+    through (backward compat).
+    """
+    if not api_key:
+        return True
+    if not authorization:
+        return False
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(token.strip().encode(), api_key.encode())
+
+
+def require_auth(app):
+    """Wrap an ASGI app so HTTP requests without a valid bearer token get 401."""
+    async def wrapper(scope, receive, send):
+        if scope["type"] == "http" and not check_bearer_token(
+                extract_header_from_scope(scope, "authorization")):
+            response = Response(status_code=401, content="Unauthorized",
+                                headers={"WWW-Authenticate": "Bearer"})
+            await response(scope, receive, send)
+            return
+        await app(scope, receive, send)
+    return wrapper
 
 # Pagination defaults and limits (configurable via environment variables)
 DEFAULT_SILENCE_PAGE = int(os.environ.get(
@@ -210,14 +222,13 @@ def make_request(method="GET", route="/", **kwargs):
             else None
         )
 
-        # Add X-Scope-OrgId header for multi-tenant setups
-        # Priority: 1) Request header from caller (via ContextVar), 2) Static config tenant
+        # Add X-Scope-OrgId header for multi-tenant setups.
+        # Tenant comes from static config only. A caller-supplied header is
+        # never trusted (previously the caller could select any tenant).
         headers = kwargs.get("headers", {})
 
-        tenant_id = _current_scope_org_id.get() or config.tenant_id
-
-        if tenant_id:
-            headers["X-Scope-OrgId"] = tenant_id
+        if config.tenant_id:
+            headers["X-Scope-OrgId"] = config.tenant_id
         if headers:
             kwargs["headers"] = headers
 
@@ -578,6 +589,11 @@ def setup_environment():
         safe_print(
             "No .env file found or could not load it - using environment variables")
 
+    if api_key:
+        safe_print("  Auth: Bearer/API key required for HTTP/SSE transports")
+    else:
+        safe_print("  WARNING: MCP_API_KEY is not set; HTTP/SSE transports run UNAUTHENTICATED")
+
     if not config.url:
         safe_print("ERROR: ALERTMANAGER_URL environment variable is not set")
         safe_print("Please set it to your Alertmanager server URL")
@@ -622,7 +638,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     # Create an SSE transport with a base path for messages
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request: Request) -> None:
+    async def handle_sse(request: Request) -> Response | None:
         """Handler for SSE connections.
 
         Establishes an SSE connection and connects it to the MCP server.
@@ -630,28 +646,22 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         Args:
             request: The incoming HTTP request
         """
-        # Extract X-Scope-OrgId header if present and set in ContextVar
-        scope_org_id = extract_header_from_request(request, "x-scope-orgid")
-        token = _current_scope_org_id.set(
-            scope_org_id) if scope_org_id else None
+        if not check_bearer_token(request.headers.get("authorization")):
+            return Response(status_code=401, content="Unauthorized",
+                            headers={"WWW-Authenticate": "Bearer"})
 
-        try:
-            # Connect the SSE transport to the request
-            async with sse.connect_sse(
-                    request.scope,
-                    request.receive,
-                    request._send,  # noqa: SLF001
-            ) as (read_stream, write_stream):
-                # Run the MCP server with the SSE streams
-                await mcp_server.run(
-                    read_stream,
-                    write_stream,
-                    mcp_server.create_initialization_options(),
-                )
-        finally:
-            # Reset ContextVar to restore previous value
-            if token is not None:
-                _current_scope_org_id.reset(token)
+        # Connect the SSE transport to the request
+        async with sse.connect_sse(
+                request.scope,
+                request.receive,
+                request._send,  # noqa: SLF001
+        ) as (read_stream, write_stream):
+            # Run the MCP server with the SSE streams
+            await mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp_server.create_initialization_options(),
+            )
 
     # Create and return the Starlette application with routes
     return Starlette(
@@ -659,7 +669,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
         routes=[
             Route("/sse", endpoint=handle_sse),  # Endpoint for SSE connections
             # Endpoint for posting messages
-            Mount("/messages/", app=sse.handle_post_message),
+            Mount("/messages/", app=require_auth(sse.handle_post_message)),
         ],
     )
 
@@ -674,26 +684,8 @@ def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlet
     """
     transport = StreamableHTTPServerTransport(None)
 
-    async def handle_mcp_request(scope, receive, send):
-        """Wrapper to extract X-Scope-OrgId header before handling MCP request."""
-        token = None
-
-        if scope['type'] == 'http':
-            # Extract X-Scope-OrgId from headers
-            scope_org_id = extract_header_from_scope(scope, "x-scope-orgid")
-            if scope_org_id:
-                token = _current_scope_org_id.set(scope_org_id)
-
-        try:
-            # Pass to the actual transport handler
-            await transport.handle_request(scope, receive, send)
-        finally:
-            # Reset ContextVar to restore previous value
-            if token is not None:
-                _current_scope_org_id.reset(token)
-
     routes = [
-        Mount("/mcp", app=handle_mcp_request),
+        Mount("/mcp", app=require_auth(transport.handle_request)),
     ]
 
     @asynccontextmanager
@@ -749,7 +741,7 @@ def run_server():
     env_port = os.environ.get("MCP_PORT")
 
     transport_default = env_transport if env_transport is not None else 'stdio'
-    host_default = env_host if env_host is not None else '0.0.0.0'
+    host_default = env_host if env_host is not None else '127.0.0.1'
     try:
         port_default = int(env_port) if env_port is not None else 8000
     except (TypeError, ValueError):
