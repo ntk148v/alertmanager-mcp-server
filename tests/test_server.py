@@ -646,3 +646,215 @@ def test_run_server_success(mock_mcp, mock_setup_env, monkeypatch):
         mock_mcp.run.assert_called_once_with(transport="stdio")
         assert any("Starting Prometheus Alertmanager MCP Server" in str(call)
                    for call in mock_print.call_args_list)
+
+
+# --- Security fixes: tenant not caller-controlled + bearer auth ---
+
+
+def _mcp_route_handler(app, attr):
+    """Return a route handler by attribute ("app" for the /mcp Mount, "endpoint" for
+    the /sse Route). Routes are index [0] in both transports."""
+    return getattr(app.routes[0], attr)
+
+
+@patch("alertmanager_mcp_server.server.requests.request")
+def test_make_request_uses_static_tenant(mock_request):
+    """Only the static config tenant is forwarded to Alertmanager."""
+    server.config.tenant_id = "config-tenant"
+    mock_response = MagicMock()
+    mock_response.json.return_value = {}
+    mock_response.raise_for_status.return_value = None
+    mock_request.return_value = mock_response
+
+    server.make_request(method="GET", route="/api/v2/status")
+
+    args, kwargs = mock_request.call_args
+    assert kwargs["headers"]["X-Scope-OrgId"] == "config-tenant"
+
+
+@patch("alertmanager_mcp_server.server.requests.request")
+def test_make_request_no_tenant_header_when_unconfigured(mock_request):
+    """Without a static tenant, no X-Scope-OrgId header is sent."""
+    server.config.tenant_id = ""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {}
+    mock_response.raise_for_status.return_value = None
+    mock_request.return_value = mock_response
+
+    server.make_request(method="GET", route="/api/v2/status")
+
+    args, kwargs = mock_request.call_args
+    headers = kwargs.get("headers", {})
+    assert headers.get("X-Scope-OrgId") is None
+
+
+def test_no_caller_tenant_plumbing():
+    """The per-request tenant ContextVar is gone, so a request header cannot
+    reach make_request()."""
+    assert not hasattr(server, "_current_scope_org_id")
+
+
+def test_check_bearer_token_no_key_allows(monkeypatch):
+    """When no API key is configured, requests are allowed (backward compat)."""
+    monkeypatch.setattr(server, "api_key", "")
+    assert server.check_bearer_token("whatever") is True
+    assert server.check_bearer_token(None) is True
+
+
+def test_check_bearer_token_with_key(monkeypatch):
+    monkeypatch.setattr(server, "api_key", "secret-key")
+    assert server.check_bearer_token("Bearer secret-key") is True
+    assert server.check_bearer_token("bearer secret-key") is True
+    assert server.check_bearer_token("Bearer wrong") is False
+    assert server.check_bearer_token("secret-key") is False  # no scheme
+    assert server.check_bearer_token("Basic secret-key") is False
+    assert server.check_bearer_token("Bearer ") is False
+    assert server.check_bearer_token("") is False
+    assert server.check_bearer_token(None) is False
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_rejects_missing_token(monkeypatch):
+    """Streamable HTTP returns 401 when the API key is set but not presented."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+
+    async def receive():
+        return {}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    handler = _mcp_route_handler(server.create_streamable_app(MagicMock()), "app")
+    await handler(
+        {"type": "http", "headers": [(b"x-scope-orgid", b"tenant-a")]},
+        receive, send)
+
+    assert any(m["type"] == "http.response.start" and m["status"] == 401
+               for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_rejects_wrong_token(monkeypatch):
+    """Streamable HTTP returns 401 for an incorrect bearer token."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+
+    sent = []
+
+    async def receive():
+        return {}
+
+    async def send(message):
+        sent.append(message)
+
+    handler = _mcp_route_handler(server.create_streamable_app(MagicMock()), "app")
+    await handler(
+        {"type": "http", "headers": [(b"authorization", b"Bearer wrong")]},
+        receive, send)
+
+    assert any(m["type"] == "http.response.start" and m["status"] == 401
+               for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_allows_valid_token(monkeypatch):
+    """Streamable HTTP forwards to the transport when the token is valid."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+    forwarded = {}
+
+    async def receive():
+        return {}
+
+    async def send(message):
+        forwarded["got"] = message
+
+    # Patch the real transport so the handler reaches handle_request.
+    class FakeTransport:
+        async def handle_request(self, scope, receive, send):
+            forwarded["handled"] = True
+
+        async def connect(self):
+            yield object(), object()
+
+    with patch.object(server, "StreamableHTTPServerTransport",
+                      return_value=FakeTransport()):
+        handler = _mcp_route_handler(server.create_streamable_app(MagicMock()), "app")
+        await handler(
+            {"type": "http", "headers": [(b"authorization", b"Bearer secret-key")]},
+            receive, send)
+
+    assert forwarded.get("handled") is True
+    assert not any(m["type"] == "http.response.start" and m["status"] == 401
+                   for m in [forwarded.get("got")] if m)
+
+
+@pytest.mark.asyncio
+async def test_sse_rejects_missing_token(monkeypatch):
+    """SSE transport returns 401 when the API key is set but not presented."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+    app = server.create_starlette_app(MagicMock())
+    sse_handler = _mcp_route_handler(app, "endpoint")  # /sse Route handler
+
+    request = MagicMock()
+    request.headers = {"authorization": ""}
+
+    response = await sse_handler(request)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_sse_messages_rejects_missing_token(monkeypatch):
+    """SSE /messages/ returns 401 without a token, even with a session_id."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+    app = server.create_starlette_app(MagicMock())
+    messages_handler = app.routes[1].app  # /messages/ Mount
+
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await messages_handler(
+        {"type": "http", "method": "POST", "path": "/messages/",
+         "query_string": b"session_id=0123456789abcdef0123456789abcdef",
+         "headers": []},
+        receive, send)
+
+    assert any(m["type"] == "http.response.start" and m["status"] == 401
+               for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_sse_allows_valid_token(monkeypatch):
+    """SSE transport does not 401 when the correct bearer token is presented; it
+    proceeds to establish the SSE connection instead."""
+    monkeypatch.setattr(server, "api_key", "secret-key")
+    mcp_server = MagicMock()
+    mcp_server.run = AsyncMock()
+    app = server.create_starlette_app(mcp_server)
+    sse_handler = _mcp_route_handler(app, "endpoint")  # /sse Route handler
+
+    request = MagicMock()
+    request.headers = {"authorization": "Bearer secret-key"}
+
+    class FakeCM:
+        async def __aenter__(self):
+            return None, None
+
+        async def __aexit__(self, *a):
+            return False
+
+    # Valid token → the handler reaches sse.connect_sse and mcp_server.run.
+    with patch.object(server.SseServerTransport, "connect_sse",
+                      return_value=FakeCM()):
+        mcp_server.create_initialization_options.return_value = {}
+        # Give scope/receive/_send so connect_sse path works.
+        request.scope = {"type": "http", "headers": []}
+        request.receive = AsyncMock(return_value=b"")
+        request._send = AsyncMock()
+        await sse_handler(request)
+        mcp_server.run.assert_awaited_once()

@@ -34,7 +34,7 @@ Prometheus Alertmanager MCP is a [Model Context Protocol](https://modelcontextpr
 - [x] Create, update, and delete silences
 - [x] Create new alerts
 - [x] Authentication support (Basic auth via environment variables)
-- [x] Multi-tenant support (via `X-Scope-OrgId` header for Mimir/Cortex)
+- [x] Multi-tenant support (via `ALERTMANAGER_TENANT` for Mimir/Cortex)
 - [x] Docker containerization support
 
 ## 3. Quickstart
@@ -75,27 +75,25 @@ ALERTMANAGER_TENANT=your_tenant_id   # optional, for multi-tenant setups
 
 #### Multi-tenant Support
 
-For multi-tenant Alertmanager deployments (e.g., Grafana Mimir, Cortex), you can specify the tenant ID in two ways:
-
-1. **Static configuration**: Set `ALERTMANAGER_TENANT` environment variable
-2. **Per-request**: Include `X-Scope-OrgId` header in requests to the MCP server
-
-The `X-Scope-OrgId` header takes precedence over the static configuration, allowing dynamic tenant switching per request.
+For multi-tenant Alertmanager deployments (e.g., Grafana Mimir, Cortex), set the tenant ID via the `ALERTMANAGER_TENANT` environment variable. The tenant is fixed at startup and is **never taken from a request header** — caller-supplied `X-Scope-OrgId` values are ignored to prevent a client from selecting an arbitrary tenant.
 
 #### Transport configuration
 
 You can control how the MCP server communicates with clients using the transport options and host/port settings. These can be set either with command-line flags (which take precedence) or with environment variables.
 
 - MCP_TRANSPORT: Transport mode. One of `stdio`, `http`, or `sse`. Default: `stdio`.
-- MCP_HOST: Host/interface to bind when running `http` or `sse` transports (used by the embedded uvicorn server). Default: `0.0.0.0`.
+- MCP_HOST: Host/interface to bind when running `http` or `sse` transports (used by the embedded uvicorn server). Default: `127.0.0.1`.
 - MCP_PORT: Port to listen on when running `http` or `sse` transports. Default: `8000`.
+- MCP_API_KEY: **Optional** bearer/API key. When set, every `http`/`sse` request must send `Authorization: Bearer <key>` or it is rejected with `401`. When unset, the server logs a startup warning that the web transports are unauthenticated. Strongly recommended for any deployment reachable over a network.
+
+> **Security**: For network-accessible deployments, always set `MCP_API_KEY`. By default the server binds to loopback only (`127.0.0.1`); expose it on `0.0.0.0` only behind a trusted proxy or firewall when you require external access.
 
 Examples:
 
 Use environment variables to set defaults (CLI flags still override):
 
 ```bash
-MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=8080 python3 -m src.alertmanager_mcp_server.server
+MCP_TRANSPORT=sse MCP_API_KEY=change-me MCP_HOST=0.0.0.0 MCP_PORT=8080 python3 -m src.alertmanager_mcp_server.server
 ```
 
 Or pass flags directly to override env vars:
