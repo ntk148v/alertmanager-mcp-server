@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ntk148v-alertmanager-mcp-server-badge.png)](https://mseep.ai/app/ntk148v-alertmanager-mcp-server)
+
 <div align="center">
     <h1>Prometheus Alertmanager MCP</h1>
     <p>
