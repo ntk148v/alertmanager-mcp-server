@@ -858,3 +858,15 @@ async def test_sse_allows_valid_token(monkeypatch):
         request._send = AsyncMock()
         await sse_handler(request)
         mcp_server.run.assert_awaited_once()
+
+
+@patch("alertmanager_mcp_server.server.requests.request")
+def test_make_request_empty_body_success(mock_request):
+    # Alertmanager answers DELETE /api/v2/silence/{id} with 200 and no body
+    import requests
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b""
+    mock_request.return_value = response
+    result = server.make_request(method="DELETE", route="/api/v2/silence/abc123")
+    assert result == {"status": "success", "status_code": 200}
