@@ -236,6 +236,10 @@ def make_request(method="GET", route="/", **kwargs):
             method=method.upper(), url=route, auth=auth, timeout=60, **kwargs
         )
         response.raise_for_status()
+        # Some endpoints (e.g. DELETE /api/v2/silence/{id}) return 200 with
+        # an empty body, which is not valid JSON.
+        if not response.content:
+            return {"status": "success", "status_code": response.status_code}
         result = response.json()
 
         # Ensure we always return something (empty list is valid but might cause issues)
