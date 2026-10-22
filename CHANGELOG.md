@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker image crashes on startup with `No module named 'mcp.server.fastmcp'`** ([#18](https://github.com/ntk148v/alertmanager-mcp-server/issues/18)). The Dockerfile used `uv pip install`, which ignores `uv.lock`, so the image got mcp 2.x. Changes:
+  - The server is ported to mcp 2.x (`MCPServer` replaces `FastMCP`). The dependency is now `mcp[cli]>=2.3.0,<3`.
+  - The Dockerfile installs from the lockfile with `uv sync --frozen`.
+  - `SETUPTOOLS_SCM_PRETEND_VERSION` has the default `0.0.0`, so `docker build .` works without build arguments.
+- The `http` transport now uses `StreamableHTTPSessionManager`, so more than one client can connect at the same time.
+- The SSE endpoint no longer logs `TypeError: 'NoneType' object is not callable` when a client disconnects.
+
+### Changed
+
+- The `http` and `sse` transports enable DNS rebinding protection (Host/Origin header check) when they bind to a loopback address (`127.0.0.1`, `localhost`, `::1`). This is the same rule as the mcp SDK.
+
 ### Security
 
 - **Fix unauthenticated access to HTTP/SSE transports** (reported by Syed Anas Mohiuddin, @SyedAnas01). The `http` and `sse` web transports had no MCP-level authentication, bound to `0.0.0.0` by default, and trusted a caller-supplied `X-Scope-OrgId` header to select the Alertmanager tenant. An unauthenticated network caller could silence alerts, delete silences, or inject alerts on any tenant. Changes:

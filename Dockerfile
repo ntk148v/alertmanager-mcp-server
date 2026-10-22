@@ -2,12 +2,16 @@
 FROM python:3.12-slim-bookworm AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1
-ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+# .git is not copied into the image, so setuptools-scm needs a version.
+ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 COPY pyproject.toml uv.lock ./
 COPY src ./src/
-RUN uv sync --frozen --no-dev --no-cache
+# Install the locked dependency versions from uv.lock.
+RUN uv sync --frozen --no-dev --no-cache --no-editable
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
