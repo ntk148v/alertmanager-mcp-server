@@ -7,7 +7,7 @@ ARG SETUPTOOLS_SCM_PRETEND_VERSION
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 COPY pyproject.toml uv.lock ./
 COPY src ./src/
-RUN uv venv && uv pip install --no-cache-dir -e .
+RUN uv sync --frozen --no-dev --no-cache
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
