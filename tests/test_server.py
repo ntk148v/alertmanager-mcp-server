@@ -1,6 +1,5 @@
 """Tests for the Prometheus Alertmanager MCP server functionality."""
 
-import asyncio
 from contextlib import asynccontextmanager
 import importlib
 import pytest
@@ -588,51 +587,49 @@ async def test_get_alert_groups_pagination_max_count(mock_make_request):
 
 
 @pytest.mark.asyncio
-async def test_streamable_app_lifespan_runs_mcp_server(monkeypatch):
-    class FakeTransport:
-        def __init__(self):
-            self.terminated = False
+async def test_streamable_app_lifespan_runs_session_manager(monkeypatch):
+    events = []
+
+    class FakeSessionManager:
+        def __init__(self, app, security_settings=None):
+            self.app = app
+            self.security_settings = security_settings
 
         async def handle_request(self, scope, receive, send):
             pass
 
         @asynccontextmanager
-        async def connect(self):
-            yield object(), object()
+        async def run(self):
+            events.append("started")
+            try:
+                yield
+            finally:
+                events.append("stopped")
 
-        async def terminate(self):
-            self.terminated = True
+    created = []
 
-    transport = FakeTransport()
+    def factory(*args, **kwargs):
+        manager = FakeSessionManager(*args, **kwargs)
+        created.append(manager)
+        return manager
+
+    monkeypatch.setattr(server, "StreamableHTTPSessionManager", factory)
     mcp_server = MagicMock()
-    mcp_server.create_initialization_options.return_value = {
-        "capabilities": {}
-    }
-    run_started = asyncio.Event()
-    run_cancelled = asyncio.Event()
-
-    async def run_forever(*args):
-        run_started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            run_cancelled.set()
-            raise
-
-    mcp_server.run = AsyncMock(side_effect=run_forever)
-    monkeypatch.setattr(
-        server,
-        "StreamableHTTPServerTransport",
-        lambda *args, **kwargs: transport,
-    )
 
     app = server.create_streamable_app(mcp_server)
 
+    assert created[0].app is mcp_server
     async with app.router.lifespan_context(app):
-        await asyncio.wait_for(run_started.wait(), timeout=1)
+        assert events == ["started"]
+    assert events == ["started", "stopped"]
 
-    assert run_cancelled.is_set()
-    assert transport.terminated is True
+
+def test_transport_security_enabled_for_loopback_only():
+    for host in ("127.0.0.1", "localhost", "::1"):
+        settings = server.transport_security_for(host)
+        assert settings is not None
+        assert settings.enable_dns_rebinding_protection is True
+    assert server.transport_security_for("0.0.0.0") is None
 
 
 @patch("alertmanager_mcp_server.server.setup_environment", return_value=True)
@@ -769,16 +766,13 @@ async def test_streamable_http_allows_valid_token(monkeypatch):
     async def send(message):
         forwarded["got"] = message
 
-    # Patch the real transport so the handler reaches handle_request.
-    class FakeTransport:
+    # Patch the session manager so the handler reaches handle_request.
+    class FakeSessionManager:
         async def handle_request(self, scope, receive, send):
             forwarded["handled"] = True
 
-        async def connect(self):
-            yield object(), object()
-
-    with patch.object(server, "StreamableHTTPServerTransport",
-                      return_value=FakeTransport()):
+    with patch.object(server, "StreamableHTTPSessionManager",
+                      return_value=FakeSessionManager()):
         handler = _mcp_route_handler(server.create_streamable_app(MagicMock()), "app")
         await handler(
             {"type": "http", "headers": [(b"authorization", b"Bearer secret-key")]},
@@ -856,8 +850,10 @@ async def test_sse_allows_valid_token(monkeypatch):
         request.scope = {"type": "http", "headers": []}
         request.receive = AsyncMock(return_value=b"")
         request._send = AsyncMock()
-        await sse_handler(request)
+        response = await sse_handler(request)
         mcp_server.run.assert_awaited_once()
+        # Starlette calls the returned object, so it must not be None.
+        assert isinstance(response, server.Response)
 
 
 @patch("alertmanager_mcp_server.server.requests.request")

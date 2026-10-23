@@ -1,19 +1,19 @@
 #!/usr/bin/env python
-import asyncio
 import hmac
 import os
 import logging
 import socket
 import signal
 import sys
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
 from mcp.server import Server
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.sse import SseServerTransport
-from mcp.server.streamable_http import StreamableHTTPServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -60,7 +60,7 @@ def check_port(port):
 
 
 dotenv.load_dotenv()
-mcp = FastMCP("Alertmanager MCP")
+mcp = MCPServer("Alertmanager MCP")
 
 def extract_header_from_scope(scope: dict, header_name: str) -> Optional[str]:
     """Extract a header value from an ASGI scope.
@@ -626,7 +626,25 @@ def setup_environment():
     return True
 
 
-def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
+def transport_security_for(host: str) -> Optional[TransportSecuritySettings]:
+    """Return DNS rebinding protection settings for a bind host.
+
+    Same rule as the mcp SDK app factories: protection is enabled only when
+    the server binds to a loopback address. For other hosts, None is returned
+    and the Host/Origin headers are not checked.
+    """
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*",
+                             "http://[::1]:*"],
+        )
+    return None
+
+
+def create_starlette_app(mcp_server: Server, *, debug: bool = False,
+                         host: str = "127.0.0.1") -> Starlette:
     """Create a Starlette application that can serve the provided MCP server with SSE.
 
     Sets up a Starlette web application with routes for SSE (Server-Sent Events)
@@ -635,14 +653,16 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     Args:
         mcp_server: The MCP server instance to connect
         debug: Whether to enable debug mode for the Starlette app
+        host: The bind host, used to decide DNS rebinding protection
 
     Returns:
         A configured Starlette application
     """
     # Create an SSE transport with a base path for messages
-    sse = SseServerTransport("/messages/")
+    sse = SseServerTransport(
+        "/messages/", security_settings=transport_security_for(host))
 
-    async def handle_sse(request: Request) -> Response | None:
+    async def handle_sse(request: Request) -> Response:
         """Handler for SSE connections.
 
         Establishes an SSE connection and connects it to the MCP server.
@@ -666,6 +686,9 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
                 write_stream,
                 mcp_server.create_initialization_options(),
             )
+        # The SSE response is already sent. Starlette requires a response
+        # object from the endpoint when the client disconnects.
+        return Response()
 
     # Create and return the Starlette application with routes
     return Starlette(
@@ -678,45 +701,28 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     )
 
 
-def create_streamable_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
+def create_streamable_app(mcp_server: Server, *, debug: bool = False,
+                          host: str = "127.0.0.1") -> Starlette:
     """Create a Starlette application that serves the Streamable HTTP transport.
 
-    This starts the MCP server inside an application startup task using the
-    transport.connect() context manager so the transport's in-memory streams
-    are connected to the MCP server. The transport's ASGI handler is mounted
-    at the '/mcp' path for GET/POST/DELETE requests.
+    A StreamableHTTPSessionManager creates one transport for each client
+    session and runs the MCP server on it. The application lifespan starts
+    and stops the session manager. The manager's ASGI handler is mounted at
+    the '/mcp' path for GET/POST/DELETE requests.
     """
-    transport = StreamableHTTPServerTransport(None)
+    session_manager = StreamableHTTPSessionManager(
+        app=mcp_server,
+        security_settings=transport_security_for(host),
+    )
 
     routes = [
-        Mount("/mcp", app=require_auth(transport.handle_request)),
+        Mount("/mcp", app=require_auth(session_manager.handle_request)),
     ]
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
-        # Run the MCP server in a background asyncio task so the lifespan
-        # event doesn't block. Store the task on app.state so shutdown can
-        # cancel it.
-        async def _run_mcp() -> None:
-            # Create the transport-backed streams and run the MCP server
-            async with transport.connect() as (read_stream, write_stream):
-                await mcp_server.run(
-                    read_stream, write_stream, mcp_server.create_initialization_options()
-                )
-
-        app.state._mcp_task = asyncio.create_task(_run_mcp())
-        try:
+        async with session_manager.run():
             yield
-        finally:
-            task = getattr(app.state, "_mcp_task", None)
-            if task:
-                task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
-                    await task
-
-            # Attempt to terminate the transport cleanly
-            with suppress(Exception):
-                await transport.terminate()
 
     app = Starlette(debug=debug, routes=routes, lifespan=lifespan)
 
@@ -729,8 +735,8 @@ def run_server():
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, handle_interrupt)
     signal.signal(signal.SIGTERM, handle_interrupt)
-    # Get the underlying MCP server from the FastMCP instance
-    mcp_server = mcp._mcp_server  # noqa: WPS437
+    # Get the underlying lowlevel MCP server from the MCPServer instance
+    mcp_server = mcp._lowlevel_server  # noqa: WPS437
 
     import argparse
 
@@ -773,7 +779,8 @@ def run_server():
         safe_print("Running server with SSE transport (web-based)")
         # Run with SSE transport (web-based)
         # Create a Starlette app to serve the MCP server
-        starlette_app = create_starlette_app(mcp_server, debug=True)
+        starlette_app = create_starlette_app(
+            mcp_server, debug=True, host=args.host)
         # Start the web server with the configured host and port
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     elif args.transport == 'http':
@@ -783,7 +790,8 @@ def run_server():
         safe_print("Running server with http transport (streamable HTTP)")
         # Run with streamable-http transport served by uvicorn so host/port
         # CLI/env variables control the listening socket (same pattern as SSE).
-        starlette_app = create_streamable_app(mcp_server, debug=True)
+        starlette_app = create_streamable_app(
+            mcp_server, debug=True, host=args.host)
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     else:
         safe_print("Running server with stdio transport (default)")
